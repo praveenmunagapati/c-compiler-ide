@@ -159,13 +159,14 @@
       if (p && editor) { editor.setValue(p[1]); resetPipeline(); }
     };
 
-    $('btn-run').onclick  = () => runPipeline();
-    $('btn-step').onclick = () => stepNext();
+    $('btn-build').onclick = () => buildPipeline();
+    $('btn-run').onclick   = () => runPipeline({ runExecution: true });
+    $('btn-step').onclick  = () => stepNext();
     $('btn-reset').onclick = () => resetPipeline();
 
     document.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-        e.preventDefault(); runPipeline();
+        e.preventDefault(); runPipeline({ runExecution: true });
       }
     });
 
@@ -206,7 +207,7 @@
     const idx = STAGES.indexOf(activeStage);
     const next = STAGES[Math.min(idx + 1, STAGES.length - 1)];
     // If pipeline hasn't been run yet, kick it off
-    if (next !== 'source' && highestStage < 1) runPipeline();
+    if (next !== 'source' && highestStage < 1) runPipeline({ runExecution: false });
     setStage(next);
   }
 
@@ -216,14 +217,19 @@
     $('tree-ast').textContent       = '// AST tree appears here after running the pipeline.';
     $('code-wast').textContent      = ';; WAST / assembly instructions appear here after running the pipeline.';
     $('section-grid').innerHTML     = '<div class="section-card"><div class="section-card-title">Run the pipeline to inspect WASM sections.</div></div>';
-    $('terminal').innerHTML         = '<div class="line line-sys">[Ready] Press ▶ Run Full Pipeline or Ctrl+Enter.</div>';
+    $('terminal').innerHTML         = '<div class="line line-sys">[Ready] Press 🔨 Build or ▶ Run Program (Ctrl+Enter).</div>';
     setStage('source');
+  }
+
+  function buildPipeline() {
+    runPipeline({ runExecution: false });
   }
 
   /* ══════════════════════════════════════════════════════════════════════
      PIPELINE EXECUTION  (uses CompilerJS global from compiler.js)
      ══════════════════════════════════════════════════════════════════════ */
-  function runPipeline() {
+  function runPipeline(opts = { runExecution: true }) {
+    const runExecution = opts && opts.runExecution !== undefined ? opts.runExecution : true;
     const CJS = window.CompilerJS;
     if (!CJS) {
       alert('CompilerJS not loaded — make sure compiler.js and stdlib.js are served.');
@@ -234,169 +240,365 @@
     const term   = $('terminal');
     term.innerHTML = '<div class="line line-sys">[Pipeline] Starting compilation…</div>';
 
+    // Collect errors/warnings for display
+    const allErrors = [];
+    const allWarnings = [];
+
     try {
       /* ── 1. Lex & Preprocess ─────────────────────────────────────── */
-      const ppText = extractPreprocessed(CJS, source);
+      const ppText = extractPreprocessed(CJS, source, allErrors);
       $('code-pp').textContent = ppText;
       highestStage = 1;
+      term.innerHTML += '<div class="line line-sys">[Stage 1] Preprocessing complete.</div>';
 
       /* ── 2. Parse → AST ──────────────────────────────────────────── */
-      const astText = extractAST(CJS, source);
+      const astText = extractAST(CJS, source, allErrors);
       $('tree-ast').textContent = astText;
       highestStage = 2;
+      term.innerHTML += '<div class="line line-sys">[Stage 2] Parsing complete — AST generated.</div>';
 
       /* ── 3 & 4. Codegen → WASM bytes ─────────────────────────────── */
-      const wasmInfo = extractWasm(CJS, source);
+      const wasmInfo = extractWasm(CJS, source, allErrors, allWarnings);
       $('code-wast').textContent = wasmInfo.wastText;
       highestStage = 3;
+      term.innerHTML += '<div class="line line-sys">[Stage 3] Code generation complete.</div>';
 
       renderSections(wasmInfo.sections);
       highestStage = 4;
 
-      /* ── 5. Execute ──────────────────────────────────────────────── */
       const bytes = wasmInfo.bytes;
-      term.innerHTML += `<div class="line line-sys">[Compiler] OK — ${bytes.length} bytes WASM binary.</div>`;
-      term.innerHTML += `<div class="line line-sys">[Runtime] Instantiating module…</div>`;
-      executeWasm(bytes, term);
-      highestStage = 5;
+      term.innerHTML += `<div class="line line-sys">[Compiler] OK — ${bytes.length} bytes WASM binary generated (${wasmInfo.sections.length} sections).</div>`;
 
-      // Auto-advance to the preprocessed tab
-      setStage('preprocessed');
+      // Show any warnings collected during compilation
+      for (const w of allWarnings) {
+        term.innerHTML += `<div class="line line-warn">[Warning] ${esc(w)}</div>`;
+      }
+
+      if (runExecution) {
+        /* ── 5. Execute ──────────────────────────────────────────────── */
+        term.innerHTML += `<div class="line line-sys">[Runtime] Instantiating and executing module…</div>`;
+        executeWasm(bytes, term);
+        highestStage = 5;
+        // Auto-advance to the Terminal output tab when running
+        setStage('output');
+      } else {
+        term.innerHTML += `<div class="line line-sys">[Build] SUCCESS — WASM binary ready. Press ▶ Run Program to execute.</div>`;
+        // Auto-advance to the WASM Sections tab when building
+        setStage('wasm');
+      }
 
     } catch (err) {
+      // Show collected errors
+      for (const e of allErrors) {
+        term.innerHTML += `<div class="line line-err">[Error] ${esc(e)}</div>`;
+      }
       term.innerHTML += `<div class="line line-err">[Error] ${esc(err.message)}</div>`;
-      if (err.stack) term.innerHTML += `<div class="line line-err">${esc(err.stack)}</div>`;
+      if (err.stack) {
+        // Only show a few lines of the stack
+        const shortStack = err.stack.split('\n').slice(0, 4).join('\n');
+        term.innerHTML += `<div class="line line-err">${esc(shortStack)}</div>`;
+      }
       highestStage = Math.max(highestStage, 0);
       setStage('output');
     }
   }
 
   /* ── Stage 1: Preprocessor ─────────────────────────────────────────── */
-  function extractPreprocessed(CJS, source) {
-    // Use the compiler's `-a lex` action to get preprocessed tokens
-    try {
-      const result = CJS.compileToStages(source, 'main.c', 'lex');
-      if (result && result.preprocessed) return result.preprocessed;
-      if (result && result.tokens) {
-        return result.tokens.map((t) => t.text).join('');
-      }
-    } catch (e) { /* fallback below */ }
+  function extractPreprocessed(CJS, source, errors) {
+    // Create a fresh PPRegistry with stdlib headers for each run
+    const pp = CJS.createDefaultPPRegistry();
 
-    // Fallback: show macro-annotated source
-    const lines = source.split('\n');
-    let out = '# 1 "main.c"\n';
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (/^\s*#\s*include/.test(line)) {
-        out += `/* ${line.trim()} → [header expanded by compiler.js stdlib] */\n`;
-      } else if (/^\s*#\s*define\s+(\w+)/.test(line)) {
-        const m = line.match(/#\s*define\s+(\w+)(?:\(([^)]*)\))?\s*(.*)/);
-        if (m) {
-          out += `/* MACRO: ${m[1]}${m[2] !== undefined ? '(' + m[2] + ')' : ''} = ${m[3] || '(empty)'} */\n`;
-        }
-      } else if (/^\s*\/\//.test(line) || /^\s*$/.test(line)) {
-        out += '\n';
-      } else {
-        out += line + '\n';
+    // Tokenize: lex → preprocess → postProcess
+    const result = CJS.tokenize(CJS.intern('main.c'), source, pp);
+
+    if (result.errors && result.errors.length > 0) {
+      for (const err of result.errors) {
+        errors.push(`${err.filename || 'main.c'}:${err.line}: ${err.message}`);
       }
+      return '// Preprocessing failed — see terminal for errors.';
     }
+
+    // Reconstruct preprocessed source text from all tokens (including included headers)
+    const tokens = result.tokens;
+    let out = '';
+    let prevLine = -1;
+    let prevFile = '';
+
+    for (const t of tokens) {
+      if (t.kind === CJS.TokenKind.EOS) continue;
+
+      // Emit file / line markers whenever file changes or line jumps significantly
+      if (t.filename !== prevFile) {
+        if (out.length > 0 && !out.endsWith('\n')) out += '\n';
+        out += `# ${t.line} "${t.filename}"\n`;
+        prevFile = t.filename;
+        prevLine = t.line;
+      } else if (t.line > prevLine) {
+        const diff = t.line - prevLine;
+        if (diff > 5) {
+          out += `\n# ${t.line} "${t.filename}"\n`;
+        } else {
+          out += '\n'.repeat(diff);
+        }
+        prevLine = t.line;
+      }
+
+      // Preserve space between tokens
+      if (t.flags && t.flags.hasSpace && !out.endsWith('\n') && !out.endsWith(' ')) {
+        out += ' ';
+      }
+
+      out += t.text;
+    }
+
+    if (!out.trim()) {
+      return '// Preprocessor produced no output.';
+    }
+
     return out;
   }
 
   /* ── Stage 2: AST ──────────────────────────────────────────────────── */
-  function extractAST(CJS, source) {
-    try {
-      const result = CJS.compileToStages(source, 'main.c', 'parse');
-      if (result && result.ast) return typeof result.ast === 'string' ? result.ast : JSON.stringify(result.ast, null, 2);
-    } catch (e) { /* fallback */ }
+  function extractAST(CJS, source, errors) {
+    // Create a fresh PPRegistry
+    const pp = CJS.createDefaultPPRegistry();
 
-    // Fallback: build a basic structural representation
-    return buildFallbackAST(source);
+    // parseSource: tokenize + parse → { translationUnit, errors, warnings }
+    const result = CJS.parseSource(CJS.intern('main.c'), source, pp);
+
+    if (result.errors && result.errors.length > 0) {
+      for (const err of result.errors) {
+        errors.push(`${err.filename || 'main.c'}:${err.line}: ${err.message}`);
+      }
+      return '// Parsing failed — see terminal for errors.';
+    }
+
+    // dumpAst takes an array of translation units
+    const rawAst = CJS.dumpAst([result.translationUnit]);
+    return formatAST(rawAst);
   }
 
-  function buildFallbackAST(source) {
-    const lines = source.split('\n');
-    let out = 'TranslationUnit\n';
-    let indent = 1;
-    const pad = (n) => '  '.repeat(n);
+  /* ── AST Tree Formatting Helper ────────────────────────────────────── */
+  function formatAST(rawAstText) {
+    if (!rawAstText || typeof rawAstText !== 'string') return rawAstText;
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('/*')) continue;
+    const lines = rawAstText.split('\n');
+    const parsedNodes = [];
+    let importedCount = 0;
 
-      if (/^#include\s*<(.+?)>/.test(trimmed)) {
-        out += pad(indent) + '├─ IncludeDirective  <' + RegExp.$1 + '>\n';
-      } else if (/^#define\s+(\w+)/.test(trimmed)) {
-        out += pad(indent) + '├─ MacroDefinition  ' + RegExp.$1 + '\n';
-      } else if (/^typedef\s+/.test(trimmed)) {
-        out += pad(indent) + '├─ TypedefDecl\n';
-      } else if (/^(\w[\w\s\*]*)\s+(\w+)\s*\(([^)]*)\)\s*\{/.test(trimmed)) {
-        const retType = RegExp.$1.trim();
-        const fname   = RegExp.$2;
-        const params  = RegExp.$3;
-        out += pad(indent) + '├─ FunctionDecl  ' + retType + ' ' + fname + '(' + params + ')\n';
-        indent++;
-        out += pad(indent) + '├─ CompoundStmt {\n';
-        indent++;
-      } else if (trimmed === '}') {
-        indent = Math.max(1, indent - 1);
-        out += pad(indent) + '└─ }\n';
-        indent = Math.max(1, indent - 1);
-      } else if (/\bif\s*\(/.test(trimmed)) {
-        out += pad(indent) + '├─ IfStmt\n';
-      } else if (/\bfor\s*\(/.test(trimmed)) {
-        out += pad(indent) + '├─ ForStmt\n';
-      } else if (/\bwhile\s*\(/.test(trimmed)) {
-        out += pad(indent) + '├─ WhileStmt\n';
-      } else if (/\breturn\b/.test(trimmed)) {
-        out += pad(indent) + '├─ ReturnStmt\n';
-      } else if (/\bprintf\s*\(/.test(trimmed)) {
-        out += pad(indent) + '├─ CallExpr  printf(…)\n';
-      } else if (/\bmalloc\s*\(/.test(trimmed)) {
-        out += pad(indent) + '├─ CallExpr  malloc(…)\n';
-      } else if (/\bfree\s*\(/.test(trimmed)) {
-        out += pad(indent) + '├─ CallExpr  free(…)\n';
-      } else if (/^\w[\w\s\*]*\s+\w+\s*[=;]/.test(trimmed)) {
-        out += pad(indent) + '├─ VarDecl\n';
-      } else {
-        out += pad(indent) + '├─ Stmt  ' + trimmed.substring(0, 60) + '\n';
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+
+      const match = line.match(/^(\s*)(.*)/);
+      const indent = match && match[1] ? match[1].length : 0;
+      const depth = Math.floor(indent / 2);
+      const content = match ? match[2] : line;
+
+      // Collapse header function prototypes that have no body (import)
+      if (content.includes('(import)') && depth === 1) {
+        importedCount++;
+        // Skip parameter lines of this imported function
+        while (i + 1 < lines.length) {
+          const nextLine = lines[i + 1];
+          const nextMatch = nextLine.match(/^(\s*)/);
+          const nextIndent = nextMatch && nextMatch[1] ? nextMatch[1].length : 0;
+          if (Math.floor(nextIndent / 2) > depth) {
+            i++;
+          } else {
+            break;
+          }
+        }
+        continue;
       }
+
+      parsedNodes.push({ depth, content, origLine: line });
     }
-    return out;
+
+    if (parsedNodes.length === 0) return rawAstText;
+
+    // Add stdlib header summary node at depth 1
+    if (importedCount > 0) {
+      parsedNodes.splice(1, 0, {
+        depth: 1,
+        content: `[Header Prototypes] (${importedCount} functions imported from stdlib)`,
+        origLine: ''
+      });
+    }
+
+    // Build box-drawing tree
+    const formattedLines = [];
+
+    for (let i = 0; i < parsedNodes.length; i++) {
+      const node = parsedNodes[i];
+      const depth = node.depth;
+      const cleanContent = simplifyAstContent(node.content);
+
+      if (depth === 0) {
+        formattedLines.push('📦 ' + cleanContent);
+        continue;
+      }
+
+      let isLast = true;
+      for (let j = i + 1; j < parsedNodes.length; j++) {
+        if (parsedNodes[j].depth === depth) {
+          isLast = false;
+          break;
+        }
+        if (parsedNodes[j].depth < depth) {
+          break;
+        }
+      }
+
+      let prefix = '';
+      for (let d = 1; d < depth; d++) {
+        let hasMoreAtD = false;
+        for (let j = i + 1; j < parsedNodes.length; j++) {
+          if (parsedNodes[j].depth === d) {
+            hasMoreAtD = true;
+            break;
+          }
+          if (parsedNodes[j].depth < d) {
+            break;
+          }
+        }
+        prefix += hasMoreAtD ? '│  ' : '   ';
+      }
+
+      const connector = isLast ? '└─ ' : '├─ ';
+      formattedLines.push(prefix + connector + cleanContent);
+    }
+
+    return formattedLines.join('\n');
+  }
+
+  function simplifyAstContent(raw) {
+    let s = raw;
+
+    // Remove internal compiler IDs ($17, def=$0, decl=$18, etc.)
+    s = s.replace(/\s*\$\d+/g, '');
+    s = s.replace(/\s*\(def=\$\d+\)/g, '');
+    s = s.replace(/\s*\(decl=\$\d+,\s*defn=\$\d+\)/g, '');
+    s = s.replace(/\s*\(decl=\$\d+\)/g, '');
+
+    if (s.startsWith('Translation Unit ')) {
+      return `TranslationUnit <${s.substring(17).trim()}>`;
+    }
+
+    // Function Declarations
+    if (s.startsWith('Decl DFunc: ') || s.startsWith('Decl DFunc ')) {
+      const declStr = s.substring(s.indexOf('DFunc') + 5).trim();
+      return `FunctionDecl  ${declStr}`;
+    }
+
+    // Variable Declarations
+    if (s.startsWith('Decl DVar: ') || s.startsWith('Decl DVar ')) {
+      const declStr = s.substring(s.indexOf('DVar') + 4).trim();
+      return `VarDecl  ${declStr}`;
+    }
+
+    // Parameters line
+    if (s.endsWith(' parameters')) {
+      return `Parameters (${s.split(' ')[0]})`;
+    }
+
+    // Statements
+    if (s.startsWith('Stmt SCompound:')) {
+      return `CompoundStmt  {${s.substring(14).trim()}}`;
+    }
+    if (s.startsWith('Stmt SExpr:')) return 'ExprStmt';
+    if (s.startsWith('Stmt SReturn:')) return 'ReturnStmt';
+    if (s.startsWith('Stmt SIf:')) return 'IfStmt';
+    if (s.startsWith('Stmt SFor:')) return 'ForStmt';
+    if (s.startsWith('Stmt SWhile:')) return 'WhileStmt';
+
+    // Expressions
+    if (s.startsWith('Expr: Type=')) {
+      const typeEnd = s.indexOf(' ', 11);
+      const typeStr = typeEnd > -1 ? s.substring(11, typeEnd) : '';
+      const rest = typeEnd > -1 ? s.substring(typeEnd + 1).trim() : s.substring(11);
+
+      if (rest.startsWith('CALL ')) return `CallExpr  (${rest.substring(5)}, return: ${typeStr})`;
+      if (rest.startsWith('IDENT ')) return `Identifier  "${rest.substring(6)}" (${typeStr})`;
+      if (rest.startsWith('STRING ')) return `StringLiteral  ${rest.substring(7)} (${typeStr})`;
+      if (rest.startsWith('INT ')) return `IntLiteral  ${rest.substring(4)}`;
+      if (rest.startsWith('FLOAT ')) return `FloatLiteral  ${rest.substring(6)}`;
+      if (rest.startsWith('IMPLICIT_CAST ')) return `ImplicitCast  -> ${typeStr}`;
+      if (rest.startsWith('DECAY ')) return `ArrayDecay  -> ${typeStr}`;
+
+      return `Expr  ${rest} [${typeStr}]`;
+    }
+
+    return s;
   }
 
   /* ── Stages 3 & 4: WASM codegen ────────────────────────────────────── */
-  function extractWasm(CJS, source) {
+  function extractWasm(CJS, source, errors, warnings) {
     let bytes = null;
     let wastText = '';
     let sections = [];
 
-    try {
-      const result = CJS.compileToStages(source, 'main.c', 'compile');
-      if (result && result.wasm) {
-        bytes = result.wasm instanceof Uint8Array ? result.wasm : new Uint8Array(result.wasm);
+    // Build a fake "fs" object for parseAllUnits.
+    // parseAllUnits calls fs.readFileSync(file, "utf-8") for each input file.
+    const fakeFs = {
+      readFileSync: (path, _encoding) => {
+        if (path === 'main.c') return source;
+        throw new Error(`File not found: ${path}`);
       }
-      if (result && result.wast) {
-        wastText = result.wast;
-      }
-    } catch (e) { /* fallback */ }
+    };
 
-    if (!bytes) {
-      // Try direct compile to wasm bytes
-      try {
-        const r2 = CJS.compile(source, 'main.c', { output: 'wasm' });
-        if (r2 instanceof Uint8Array) bytes = r2;
-        else if (r2 && r2.bytes) bytes = new Uint8Array(r2.bytes);
-      } catch (e) { /* fallback */ }
+    // Create a fresh PPRegistry
+    const pp = CJS.createDefaultPPRegistry();
+
+    // Collect errors/warnings from compilation
+    const compileErrors = [];
+    const compileWarnings = [];
+    const writeErr = (s) => { compileErrors.push(s.replace(/\n$/, '')); };
+
+    const compilerOptions = {
+      allowImplicitFunctionDecl: true,
+      allowEmptyParams: true,
+    };
+
+    try {
+      // Parse all units (handles user code + auto-required stdlib sources like __alloca.c)
+      const units = CJS.parseAllUnits(fakeFs, pp, ['main.c'], {
+        warningFlags: { pointerDecay: false, circularDependency: false },
+        compilerOptions,
+        writeErr,
+      });
+
+      // Link translation units
+      const linkResult = CJS.linkTranslationUnits(units, compilerOptions);
+      if (linkResult.errors && linkResult.errors.length > 0) {
+        for (const err of linkResult.errors) {
+          errors.push(`Link error: ${err.message}`);
+        }
+        wastText = ';; Linking failed — see terminal for errors.';
+        return { bytes: new Uint8Array(0), wastText, sections: [] };
+      }
+
+      // Generate WASM binary
+      bytes = CJS.generateCode(units, 'a.wasm', { compilerOptions });
+
+    } catch (e) {
+      // If it's a compilation failure with diagnostics already emitted to writeErr, 
+      // collect those instead of the raw exception
+      if (e.compilationFailed && compileErrors.length > 0) {
+        for (const msg of compileErrors) errors.push(msg);
+      } else {
+        errors.push(e.message);
+      }
     }
 
-    if (bytes) {
+    // Forward compile warnings
+    for (const w of compileWarnings) warnings.push(w);
+
+    if (bytes && bytes.length > 0) {
       sections = parseWasmSections(bytes);
-      if (!wastText) {
-        wastText = generateWastSummary(sections, bytes);
-      }
+      wastText = generateWastSummary(sections, bytes);
     } else {
-      wastText = wastText || ';; (compilation did not produce wasm bytes — see terminal for errors)';
+      wastText = wastText || ';; (compilation did not produce WASM bytes — see terminal for errors)';
       bytes = new Uint8Array(0);
     }
 
@@ -448,12 +650,22 @@
 
     for (const sec of sections) {
       out += `  ;; Section ${sec.id}: ${sec.name}  (${sec.length} bytes @ offset ${sec.offset})\n`;
-      if (sec.id === 5) { // Memory
+      if (sec.id === 1) { // Type
+        out += `  ;; ${sec.length} bytes of function type signatures\n`;
+      } else if (sec.id === 2) { // Import
+        out += `  ;; (host imports: libc functions, memory, etc.)\n`;
+      } else if (sec.id === 3) { // Function
+        out += `  ;; (function index → type index mapping)\n`;
+      } else if (sec.id === 5) { // Memory
         out += '  (memory (export "memory") 2)\n';
+      } else if (sec.id === 6) { // Global
+        out += `  ;; (global variables: stack pointer, heap base, etc.)\n`;
       } else if (sec.id === 7) { // Export
-        out += '  ;; (exports listed in binary)\n';
+        out += '  ;; (exports: _start or main, memory, etc.)\n';
       } else if (sec.id === 10) { // Code
         out += `  ;; ${sec.length} bytes of function bodies\n`;
+      } else if (sec.id === 11) { // Data
+        out += `  ;; ${sec.length} bytes of data segments (string literals, static data)\n`;
       }
     }
 
@@ -481,13 +693,99 @@
     }
   }
 
-  /* ── Stage 5: Execute WASM ─────────────────────────────────────────── */
+  /* ── Stage 5: Execute WASM via host.js in a Web Worker ─────────────── */
   function executeWasm(bytes, termEl) {
     if (!bytes || bytes.length === 0) {
       termEl.innerHTML += '<div class="line line-sys">[Runtime] No WASM bytes to execute.</div>';
       return;
     }
 
+    // Build a Worker from an inline script that loads host.js and calls runModule.
+    // host.js only exports runModule in Worker context (self, when window is absent).
+    // Use absolute URL because Blob workers have an opaque origin.
+    const hostUrl = new URL('host.js', location.href).href;
+    const workerCode = `
+      importScripts('${hostUrl}');
+
+      self.onmessage = async function(e) {
+        if (e.data.type !== 'run') return;
+        const bytes = new Uint8Array(e.data.bytes);
+        const decoder = new TextDecoder();
+        try {
+          const store = new self.BLOCK_FS.MemoryByteStore(1024 * 1024);
+          const blockFS = self.BLOCK_FS.create(store);
+          try { blockFS.mkdir('/tmp', 0o777); } catch(err) {}
+
+          const exitCode = await runModule({
+            bytes: bytes,
+            args: ['a.out'],
+            blockFsFactory: async function (ctx) {
+              return { c: blockFS.toWasmEnv(ctx) };
+            },
+            writeOut: function(buf) {
+              const text = (buf instanceof Uint8Array) ? decoder.decode(buf) : String(buf);
+              self.postMessage({ type: 'stdout', text: text });
+            },
+            writeErr: function(buf) {
+              const text = (buf instanceof Uint8Array) ? decoder.decode(buf) : String(buf);
+              self.postMessage({ type: 'stderr', text: text });
+            },
+          });
+          self.postMessage({ type: 'exit', exitCode: exitCode });
+        } catch(err) {
+          self.postMessage({ type: 'error', message: err.message, stack: err.stack });
+        }
+      };
+    `;
+
+    try {
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      const worker = new Worker(workerUrl);
+
+      worker.onmessage = (e) => {
+        const msg = e.data;
+        if (msg.type === 'stdout') {
+          // Split on newlines so each line gets its own element
+          const lines = msg.text.split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            if (line || i < lines.length - 1) {
+              termEl.innerHTML += `<div class="line">${esc(line)}</div>`;
+            }
+          }
+        } else if (msg.type === 'stderr') {
+          termEl.innerHTML += `<div class="line line-err">${esc(msg.text)}</div>`;
+        } else if (msg.type === 'exit') {
+          termEl.innerHTML += `<div class="line line-sys">[Exit] Process exited with code ${msg.exitCode}</div>`;
+          worker.terminate();
+          URL.revokeObjectURL(workerUrl);
+        } else if (msg.type === 'error') {
+          termEl.innerHTML += `<div class="line line-err">[Runtime Error] ${esc(msg.message)}</div>`;
+          worker.terminate();
+          URL.revokeObjectURL(workerUrl);
+        }
+      };
+
+      worker.onerror = (e) => {
+        termEl.innerHTML += `<div class="line line-err">[Worker Error] ${esc(e.message)}</div>`;
+        worker.terminate();
+        URL.revokeObjectURL(workerUrl);
+      };
+
+      // Send the WASM bytes to the worker (as transferable)
+      const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+      worker.postMessage({ type: 'run', bytes: buffer }, [buffer]);
+
+    } catch (workerErr) {
+      termEl.innerHTML += `<div class="line line-err">[Worker] Failed to create worker: ${esc(workerErr.message)}</div>`;
+      termEl.innerHTML += '<div class="line line-sys">[Fallback] Attempting direct instantiation…</div>';
+      executeWasmDirect(bytes, termEl);
+    }
+  }
+
+  /* ── Fallback: Direct WASM execution (no host.js runtime) ──────────── */
+  function executeWasmDirect(bytes, termEl) {
     let buf = '';
     const flush = () => {
       if (buf) { termEl.innerHTML += `<div class="line">${esc(buf)}</div>`; buf = ''; }
