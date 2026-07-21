@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C Compiler Pipeline Visualizer IDE</title>
+  <meta name="description" content="An interactive educational IDE that visualizes every stage of C compilation: preprocessing, parsing, AST, assembly, WASM binary sections, and live execution.">
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Monaco Editor AMD loader -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js" crossorigin="anonymous"></script>
+
+  <!-- Compiler Engine (order matters: stdlib before compiler) -->
+  <script src="stdlib.js" crossorigin="anonymous"></script>
+  <script src="compiler.js" crossorigin="anonymous"></script>
+
+  <!-- App Stylesheet -->
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+  <!-- ═══════════ NAVBAR ═══════════ -->
+  <header class="navbar">
+    <div class="brand">
+      <div class="brand-icon">C</div>
+      <h1 class="brand-title">C Compiler Pipeline Visualizer <span class="tag">C11 → WASM</span></h1>
+    </div>
+    <div class="nav-controls">
+      <select id="preset-select" class="preset-select" aria-label="Code preset"></select>
+      <button id="btn-reset" class="btn btn-reset" title="Reset pipeline">↻ Reset</button>
+      <button id="btn-step" class="btn" title="Step to next stage">Step ➔</button>
+      <button id="btn-run" class="btn btn-primary" title="Run full pipeline (Ctrl+Enter)">▶ Run Pipeline</button>
+    </div>
+  </header>
+
+  <!-- ═══════════ PIPELINE STEPPER ═══════════ -->
+  <div class="pipeline-banner">
+    <div class="stepper">
+      <div class="step-node active" data-stage="source">
+        <div class="step-num">0</div>
+        <div class="step-info"><div class="step-title">Source</div><div class="step-file">main.c</div></div>
+      </div>
+      <div class="step-arrow">➔</div>
+      <div class="step-node" data-stage="preprocessed">
+        <div class="step-num">1</div>
+        <div class="step-info"><div class="step-title">Preprocess</div><div class="step-file">main.i</div></div>
+      </div>
+      <div class="step-arrow">➔</div>
+      <div class="step-node" data-stage="ast">
+        <div class="step-num">2</div>
+        <div class="step-info"><div class="step-title">Parse / AST</div><div class="step-file">AST</div></div>
+      </div>
+      <div class="step-arrow">➔</div>
+      <div class="step-node" data-stage="wast">
+        <div class="step-num">3</div>
+        <div class="step-info"><div class="step-title">Assembly</div><div class="step-file">main.s</div></div>
+      </div>
+      <div class="step-arrow">➔</div>
+      <div class="step-node" data-stage="wasm">
+        <div class="step-num">4</div>
+        <div class="step-info"><div class="step-title">WASM Binary</div><div class="step-file">main.o</div></div>
+      </div>
+      <div class="step-arrow">➔</div>
+      <div class="step-node" data-stage="output">
+        <div class="step-num">5</div>
+        <div class="step-info"><div class="step-title">Execute</div><div class="step-file">a.out</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ MAIN LAYOUT ═══════════ -->
+  <div class="main-container">
+
+    <!-- LEFT: Monaco Editor -->
+    <div class="left-pane">
+      <div class="pane-header">
+        <div class="pane-label"><span>Source Code</span><span class="badge">main.c</span></div>
+      </div>
+      <div class="editor-wrapper">
+        <div id="monaco-editor"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Inspector Tabs -->
+    <div class="right-pane">
+      <div class="tab-bar">
+        <div class="tab-item active" data-stage="preprocessed">1. Preprocessed</div>
+        <div class="tab-item" data-stage="ast">2. AST</div>
+        <div class="tab-item" data-stage="wast">3. Assembly</div>
+        <div class="tab-item" data-stage="wasm">4. Sections</div>
+        <div class="tab-item" data-stage="output">5. Terminal</div>
+      </div>
+
+      <!-- Panels -->
+      <div id="panel-preprocessed" class="tab-panel active">
+        <div id="code-pp" class="code-viewer">// Preprocessed output appears here after running the pipeline.</div>
+      </div>
+      <div id="panel-ast" class="tab-panel">
+        <div id="tree-ast" class="tree-viewer">// AST tree appears here after running the pipeline.</div>
+      </div>
+      <div id="panel-wast" class="tab-panel">
+        <div id="code-wast" class="code-viewer">;; WAST / assembly instructions appear here after running the pipeline.</div>
+      </div>
+      <div id="panel-wasm" class="tab-panel">
+        <div id="section-grid" class="section-grid">
+          <div class="section-card"><div class="section-card-title">Run the pipeline to inspect WASM sections.</div></div>
+        </div>
+      </div>
+      <div id="panel-output" class="tab-panel">
+        <div id="terminal" class="terminal-view">
+          <div class="line line-sys">[Ready] Press ▶ Run Pipeline or Ctrl+Enter.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ INSIGHT PANEL ═══════════ -->
+  <div class="insight-panel">
+    <div class="insight-icon">💡</div>
+    <div class="insight-body">
+      <div id="insight-title" class="insight-title">Stage 0 — C Source Code  (main.c)</div>
+      <div id="insight-text" class="insight-text">Human-readable C source: includes, macros, comments, and type-safe syntax. This is the code you write and edit.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ STATUS BAR ═══════════ -->
+  <div class="status-bar">
+    <div><span class="dot"></span>C Compiler Pipeline Visualizer IDE</div>
+    <div>compiler.js + stdlib.js | C11 → WebAssembly</div>
+  </div>
+
+  <!-- App Logic (after DOM) -->
+  <script src="app.js"></script>
+</body>
+</html>
