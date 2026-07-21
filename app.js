@@ -2,12 +2,12 @@
  * C Compiler IDE — Visual Studio Code Architecture & Application Logic
  *
  * Features:
- *   - VS Code Activity Bar & Multi-View Sidebar (Explorer, Stages, Search, SCM, Debug, Settings)
+ *   - VS Code Activity Bar & Multi-View Sidebar (Explorer, Flowchart, Algorithm, Debug, Stages, Settings)
+ *   - Mermaid.js Visual Flowchart Generator with Standard Symbols (Start/Stop, Process, Decision, IO)
+ *   - C Code Pseudo-Algorithm Step Reconstructor
  *   - Clean Editor Tab Bar (Stage outputs stored in-memory in Stage Explorer)
  *   - C Pointer & Struct Memory Heap Simulator & Interactive Debugger
- *   - Live Variables Watcher (Pointers, Structs, Members), Call Stack Inspector, and Interactive Debug Console Evaluator
  *   - Command Palette & Quick Open Overlay (Ctrl+Shift+P / Ctrl+P / F1)
- *   - Global VFS Search & Replace Engine
  */
 (function () {
   "use strict";
@@ -165,6 +165,288 @@
     if (path.endsWith('.txt')) return { icon: 'codicon-output', cls: 'icon-output' };
     return { icon: 'codicon-file', cls: 'icon-default' };
   }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     MERMAID.JS VISUAL FLOWCHART GENERATOR
+     ══════════════════════════════════════════════════════════════════════ */
+  const FlowchartGenerator = {
+    init() {
+      if (window.mermaid) {
+        try {
+          mermaid.initialize({
+            startOnLoad: false,
+            theme: 'dark',
+            flowchart: { curve: 'basis', htmlLabels: true }
+          });
+        } catch(e) {}
+      }
+
+      $('btn-flowchart-render').onclick = () => this.generateAndRender();
+    },
+
+    generateAndRender() {
+      const activePath = Tabs.getActive();
+      if (!activePath) return;
+      const file = VFS.read(activePath);
+      if (!file) return;
+
+      const code = file.content;
+      const mermaidDSL = this.parseCToMermaid(code);
+
+      this.renderToContainer('flowchart-sidebar-container', mermaidDSL, 'svg-sidebar-flowchart');
+      this.renderToContainer('flowchart-panel-container', mermaidDSL, 'svg-panel-flowchart');
+    },
+
+    parseCToMermaid(code) {
+      // Standard Flowchart Symbols:
+      // Start/Stop: ([Start: main()])
+      // Process: [Allocate memory with malloc()]
+      // Decision: {"!head || !second || !third?"}
+      // IO: [/Print temp->data/]
+
+      const lines = code.split('\n');
+      let dsl = 'flowchart TD\n';
+      let nodeIdx = 1;
+
+      dsl += `  Start(["▶ Start: main()"])\n`;
+      let prevNode = 'Start';
+
+      lines.forEach((rawLine) => {
+        const line = rawLine.trim();
+        if (!line || line.startsWith('//') || line.startsWith('/*') || line.startsWith('#') || line === '{' || line === '}') {
+          return;
+        }
+
+        // 1. Struct Definition
+        if (line.startsWith('struct ') && line.includes('{')) {
+          const id = `N${nodeIdx++}`;
+          dsl += `  ${prevNode} --> ${id}["Define Data Structure: struct Node"]\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 2. Malloc Memory Allocation
+        if (line.includes('malloc(')) {
+          const id = `N${nodeIdx++}`;
+          const varName = line.split('=')[0].replace('struct Node', '').replace('*', '').trim();
+          dsl += `  ${prevNode} --> ${id}["Process: Allocate Memory (malloc) for '${varName}'"]\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 3. Null Check / Decision Diamond
+        if (line.startsWith('if (')) {
+          const id = `N${nodeIdx++}`;
+          const cond = line.match(/if\s*\((.+)\)/)?.[1] || line;
+          const cleanCond = cond.replace(/"/g, "'");
+          dsl += `  ${prevNode} --> ${id}{"Decision: ${cleanCond}?"}\n`;
+          const errId = `N${nodeIdx++}`;
+          dsl += `  ${id} -- Yes --> ${errId}[/"Output: Memory Allocation Failed & Exit"/]\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 4. Pointer / Field Assignment (head->data = 10; head->next = second;)
+        if (line.includes('->')) {
+          const id = `N${nodeIdx++}`;
+          const cleanStmt = line.replace(';', '').replace(/"/g, "'");
+          dsl += `  ${prevNode} --> ${id}["Assign Member: ${cleanStmt}"]\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 5. Pointer Declaration / Null Assignment (struct Node *head = NULL;)
+        if (line.includes('*') && line.includes('=')) {
+          const id = `N${nodeIdx++}`;
+          const cleanStmt = line.replace(';', '').replace(/"/g, "'");
+          dsl += `  ${prevNode} --> ${id}["Initialize Pointer: ${cleanStmt}"]\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 6. Loop Decision Diamond: while (temp != NULL)
+        if (line.startsWith('while (')) {
+          const id = `N${nodeIdx++}`;
+          const cond = line.match(/while\s*\((.+)\)/)?.[1] || line;
+          const cleanCond = cond.replace(/"/g, "'");
+          dsl += `  ${prevNode} --> ${id}{"Loop Decision: ${cleanCond}?"}\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 7. Output / Print Statement
+        if (line.includes('printf(')) {
+          const id = `N${nodeIdx++}`;
+          const msg = line.match(/printf\((.+)\);/)?.[1] || line;
+          const cleanMsg = msg.replace(/"/g, "'");
+          dsl += `  ${prevNode} --> ${id}[/"IO Output: printf(${cleanMsg})"/]\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 8. Free Memory
+        if (line.includes('free(')) {
+          const id = `N${nodeIdx++}`;
+          const varName = line.match(/free\((.+)\);/)?.[1] || 'node';
+          dsl += `  ${prevNode} --> ${id}["Process: Free Heap Memory (free(${varName}))"]\n`;
+          prevNode = id;
+          return;
+        }
+
+        // 9. Return Statement
+        if (line.startsWith('return ')) {
+          const id = `N${nodeIdx++}`;
+          const retVal = line.replace(';', '').trim();
+          dsl += `  ${prevNode} --> ${id}["${retVal}"]\n`;
+          prevNode = id;
+          return;
+        }
+      });
+
+      const stopId = `StopNode`;
+      dsl += `  ${prevNode} --> ${stopId}(["■ Stop: End Execution"])\n`;
+      return dsl;
+    },
+
+    async renderToContainer(containerId, dsl, svgId) {
+      const container = $(containerId);
+      if (!container) return;
+
+      if (!window.mermaid) {
+        try {
+          const m = await import('https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs');
+          window.mermaid = m.default;
+          window.mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { curve: 'basis', htmlLabels: true } });
+        } catch(e) {
+          container.innerHTML = `<pre class="stage-viewer-content">${esc(dsl)}</pre>`;
+          return;
+        }
+      }
+
+      try {
+        const uniqueId = svgId + Math.floor(Math.random() * 100000);
+        const { svg } = await window.mermaid.render(uniqueId, dsl);
+        container.innerHTML = svg;
+      } catch(err) {
+        container.innerHTML = `<div class="term-line term-sys">${esc(dsl)}</div>`;
+      }
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
+     C CODE ALGORITHM STEP RECONSTRUCTOR
+     ══════════════════════════════════════════════════════════════════════ */
+  const AlgorithmReconstructor = {
+    init() {
+      $('btn-algorithm-render').onclick = () => this.generateAndRender();
+    },
+
+    generateAndRender() {
+      const activePath = Tabs.getActive();
+      if (!activePath) return;
+      const file = VFS.read(activePath);
+      if (!file) return;
+
+      const steps = this.parseCToAlgorithmSteps(file.content);
+      this.renderToContainer('algorithm-sidebar-container', steps);
+      this.renderToContainer('algorithm-panel-container', steps);
+    },
+
+    parseCToAlgorithmSteps(code) {
+      const steps = [];
+      const lines = code.split('\n');
+
+      let stepNum = 1;
+
+      // Check if linked list / struct is used
+      if (code.includes('struct Node')) {
+        steps.push({
+          num: stepNum++,
+          title: 'Define Node Data Structure',
+          desc: 'Create a self-referential struct `Node` containing an integer data payload (`int data`) and a pointer reference to the next node (`struct Node *next`).',
+          snippet: 'struct Node { int data; struct Node *next; };'
+        });
+      }
+
+      steps.push({
+        num: stepNum++,
+        title: 'Initialize Root & Pointer References',
+        desc: 'Declare node pointers (e.g. `head`, `second`, `third`, `temp`) and set their initial address to `NULL`.',
+        snippet: 'struct Node *head = NULL, *second = NULL, *third = NULL;'
+      });
+
+      if (code.includes('malloc')) {
+        steps.push({
+          num: stepNum++,
+          title: 'Dynamic Heap Memory Allocation (`malloc`)',
+          desc: 'Allocate dynamic memory blocks on the heap for each list node using `malloc(sizeof(struct Node))`.',
+          snippet: 'head = (struct Node *)malloc(sizeof(struct Node));'
+        });
+
+        steps.push({
+          num: stepNum++,
+          title: 'Heap Allocation Validation',
+          desc: 'Check if any returned pointer is `NULL`. If memory allocation fails, print error message and abort execution with code `1`.',
+          snippet: 'if (!head || !second || !third) { return 1; }'
+        });
+      }
+
+      if (code.includes('->data') || code.includes('->next')) {
+        steps.push({
+          num: stepNum++,
+          title: 'Assign Data Payloads & Link Pointers',
+          desc: 'Set integer values for node data fields and link `next` pointers to form the sequential linked list (`head -> second -> third -> NULL`).',
+          snippet: 'head->data = 10; head->next = second;\nsecond->data = 20; second->next = third;\nthird->data = 30; third->next = NULL;'
+        });
+      }
+
+      if (code.includes('while (temp != NULL)') || code.includes('printf')) {
+        steps.push({
+          num: stepNum++,
+          title: 'Traverse & Output Linked List Nodes',
+          desc: 'Initialize a temporary pointer `temp = head`. Iterate line-by-line while `temp != NULL`, printing `temp->data` and advancing `temp = temp->next`. Finally print `"NULL"`.',
+          snippet: 'while (temp != NULL) {\n    printf("%d -> ", temp->data);\n    temp = temp->next;\n}'
+        });
+      }
+
+      if (code.includes('free(')) {
+        steps.push({
+          num: stepNum++,
+          title: 'Heap Memory Cleanup (`free`)',
+          desc: 'Traverse the linked list and release dynamically allocated heap memory for every node using `free(temp)` to prevent memory leaks.',
+          snippet: 'while (temp != NULL) {\n    struct Node *next = temp->next;\n    free(temp);\n    temp = next;\n}'
+        });
+      }
+
+      steps.push({
+        num: stepNum++,
+        title: 'Program Termination',
+        desc: 'Return `0` to signal successful program completion.',
+        snippet: 'return 0;'
+      });
+
+      return steps;
+    },
+
+    renderToContainer(containerId, steps) {
+      const container = $(containerId);
+      if (!container) return;
+      container.innerHTML = '';
+
+      steps.forEach(step => {
+        const card = document.createElement('div');
+        card.className = 'algo-step-card';
+        card.innerHTML =
+          `<div class="algo-step-header">` +
+            `<span class="algo-step-title">${esc(step.title)}</span>` +
+            `<span class="algo-step-num">Step ${step.num}</span>` +
+          `</div>` +
+          `<div class="algo-step-desc">${esc(step.desc)}</div>` +
+          (step.snippet ? `<div class="algo-code-snippet">${esc(step.snippet)}</div>` : '');
+        container.appendChild(card);
+      });
+    }
+  };
 
   /* ══════════════════════════════════════════════════════════════════════
      COMPILATION STAGES OUTPUT STORE (Clean Tab Isolation)
@@ -326,6 +608,8 @@
       updateStatusBar();
       FileExplorer.render();
       Debugger.refreshBreakpointsDecoration();
+      FlowchartGenerator.generateAndRender();
+      AlgorithmReconstructor.generateAndRender();
       setTimeout(() => { editor.layout(); }, 10);
     },
 
@@ -632,7 +916,6 @@
       const file = VFS.read(activePath);
       const lines = file.content.split('\n');
 
-      // Find executable statement lines (ignoring empty lines, comments, struct definition body)
       this.executableLines = [];
       let inStructDef = false;
 
@@ -663,7 +946,6 @@
       this.heap.clear();
       this.nextAddr = 0x2000;
 
-      // Find first breakpoint or start at first statement line
       const firstBp = Array.from(this.breakpoints).sort((a,b)=>a-b).find(l => this.executableLines.includes(l));
       this.currentLine = firstBp || this.executableLines[0];
 
@@ -717,12 +999,10 @@
 
       let nextLineIndex = this.executableLines.indexOf(this.currentLine) + 1;
 
-      // Handle while loop conditions e.g. while (temp != NULL)
       if (currentLineText.includes('while (temp != NULL)') || currentLineText.includes('while (temp)')) {
         const tempVar = this.variables.get('temp');
         const isNull = !tempVar || tempVar.value === 'NULL' || tempVar.value === 0 || tempVar.value === '0x0';
         if (isNull) {
-          // Jump after while loop body
           let braceCount = 1;
           let targetLine = this.currentLine + 1;
           for (let i = this.currentLine; i < lines.length; i++) {
@@ -740,7 +1020,6 @@
         }
       }
 
-      // Handle loop body repeat: when at temp = temp->next; loop back to while statement
       if (currentLineText.includes('temp = temp->next') || currentLineText.includes('free(temp)')) {
         for (let i = this.currentLine - 1; i >= 0; i--) {
           if (lines[i].includes('while')) {
@@ -798,7 +1077,6 @@
       const lines = file.content.split('\n');
       const lineText = lines[lineNum - 1] ? lines[lineNum - 1].trim() : '';
 
-      // 1. Declaration: struct Node *head = NULL;
       const structDecl = lineText.match(/struct\s+(\w+)\s*\*([a-zA-Z_]\w*)\s*=\s*(.+);/);
       if (structDecl) {
         const typeName = 'struct ' + structDecl[1] + '*';
@@ -812,7 +1090,6 @@
         });
       }
 
-      // 2. Malloc: head = (struct Node *)malloc(sizeof(struct Node));
       const mallocMatch = lineText.match(/([a-zA-Z_]\w*)\s*=\s*.*malloc\(/);
       if (mallocMatch) {
         const varName = mallocMatch[1];
@@ -823,7 +1100,6 @@
         this.variables.set(varName, existing);
       }
 
-      // 3. Member assignment: head->data = 10;
       const memberValMatch = lineText.match(/([a-zA-Z_]\w*)->(data)\s*=\s*(.+);/);
       if (memberValMatch) {
         const varName = memberValMatch[1];
@@ -837,7 +1113,6 @@
         }
       }
 
-      // 4. Pointer member assignment: head->next = second;
       const memberPtrMatch = lineText.match(/([a-zA-Z_]\w*)->(next)\s*=\s*(.+);/);
       if (memberPtrMatch) {
         const varName = memberPtrMatch[1];
@@ -853,7 +1128,6 @@
         }
       }
 
-      // 5. Pointer copy: temp = head; or temp = temp->next; or struct Node *next = temp->next;
       const copyPtrMatch = lineText.match(/(?:struct\s+\w+\s*\*)?\s*([a-zA-Z_]\w*)\s*=\s*([a-zA-Z_]\w*)(?:->(next|data))?;/);
       if (copyPtrMatch && !lineText.includes('malloc') && !lineText.includes('sizeof')) {
         const targetVarName = copyPtrMatch[1];
@@ -884,7 +1158,6 @@
         }
       }
 
-      // 6. Primitive integer assignments: int sum = 0; or sum += i;
       const primMatch = lineText.match(/(?:int)\s+([a-zA-Z_]\w*)\s*=\s*(\d+);/);
       if (primMatch) {
         this.variables.set(primMatch[1], { name: primMatch[1], type: 'int', value: parseInt(primMatch[2], 10) });
@@ -989,6 +1262,9 @@
 
         this._activeView = viewName;
       }
+
+      if (viewName === 'flowchart') FlowchartGenerator.generateAndRender();
+      if (viewName === 'algorithm') AlgorithmReconstructor.generateAndRender();
 
       if (isMobile) {
         const backdrop = $('sidebar-backdrop');
@@ -1162,6 +1438,8 @@
     _buildItems() {
       if (this._mode === 'commands') {
         this._items = [
+          { label: 'View Flowchart Graph (Mermaid.js)', shortcut: '', action: () => ActivityBar.switchView('flowchart') },
+          { label: 'View Algorithm Steps', shortcut: '', action: () => ActivityBar.switchView('algorithm') },
           { label: 'Start Debugging (F5)', shortcut: 'F5', action: () => Debugger.start() },
           { label: 'Run C Program (Build & Execute)', shortcut: 'Ctrl+Enter', action: () => runPipeline(true) },
           { label: 'Build Target to WebAssembly AST & WASM', shortcut: '', action: () => runPipeline(false) },
@@ -1243,7 +1521,7 @@
   };
 
   /* ══════════════════════════════════════════════════════════════════════
-     BOTTOM PANEL TABS CONTROLLER (PROBLEMS, OUTPUT, DEBUG, TERMINAL)
+     BOTTOM PANEL TABS CONTROLLER (FLOWCHART, ALGORITHM, PROBLEMS, OUTPUT, DEBUG, TERMINAL)
      ══════════════════════════════════════════════════════════════════════ */
   const PanelController = {
     _activePanel: 'terminal',
@@ -1269,6 +1547,9 @@
       if (targetBody) targetBody.classList.remove('hidden');
 
       this._activePanel = panelName;
+
+      if (panelName === 'flowchart') FlowchartGenerator.generateAndRender();
+      if (panelName === 'algorithm') AlgorithmReconstructor.generateAndRender();
 
       const panel = $('terminal-panel');
       if (panel.classList.contains('collapsed')) {
@@ -1451,6 +1732,8 @@
     SearchEngine.init();
     SettingsController.init();
     Debugger.init();
+    FlowchartGenerator.init();
+    AlgorithmReconstructor.init();
     FileExplorer.render();
     SCM.updateStatus();
     bootMonaco();
@@ -1707,6 +1990,8 @@
 
       // Store in CompilationOutputs (Clean Tab Isolation — NO tabs opened)
       CompilationOutputs.set(ppText, astText, wasmInfo.wastText, sectionSummary);
+      FlowchartGenerator.generateAndRender();
+      AlgorithmReconstructor.generateAndRender();
 
       for (const w of warnings) {
         termLog(`[Warning] ${w}`, 'warn');

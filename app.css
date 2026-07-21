@@ -431,6 +431,82 @@ button, input, select, textarea {
   padding: 2px 0;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   FLOWCHART & ALGORITHM VIEWERS
+   ══════════════════════════════════════════════════════════════════════ */
+.flowchart-container {
+  background: #121212;
+  border: 1px solid var(--vsc-border-sidebar);
+  border-radius: 4px;
+  padding: 12px;
+  overflow: auto;
+  max-height: 520px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.flowchart-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.algorithm-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.algo-step-card {
+  background: var(--vsc-bg-input);
+  border: 1px solid var(--vsc-border-input);
+  border-left: 3px solid var(--vsc-blue);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.algo-step-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.algo-step-num {
+  background: var(--vsc-blue);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+}
+
+.algo-step-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--vsc-fg-list-active);
+}
+
+.algo-step-desc {
+  font-size: 11px;
+  color: var(--vsc-fg-sidebar);
+  line-height: 1.4;
+}
+
+.algo-code-snippet {
+  background: #121212;
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 4px 6px;
+  border-radius: 3px;
+  font-family: var(--vsc-mono);
+  font-size: 10px;
+  color: #4ec9b0;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin-top: 2px;
+}
+
 /* Compilation Stages Explorer Navigation & Viewer */
 .stage-info-desc {
   font-size: 11px;
@@ -906,7 +982,7 @@ button, input, select, textarea {
 }
 
 .terminal-panel {
-  height: 220px;
+  height: 240px;
   background: var(--vsc-bg-panel);
   border-top: 1px solid var(--vsc-border-panel);
   display: flex;

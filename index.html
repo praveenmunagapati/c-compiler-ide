@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>C Compiler IDE — Visual Studio Code</title>
-  <meta name="description" content="A browser-based C11 IDE inspired by Visual Studio Code with virtual file system, integrated WebAssembly compiler, and live diagnostics.">
+  <meta name="description" content="A browser-based C11 IDE inspired by Visual Studio Code with virtual file system, integrated WebAssembly compiler, live diagnostics, flowcharts, and algorithm reconstruction.">
 
   <!-- Cross-Origin Isolation for SharedArrayBuffer (GitHub Pages compatibility) -->
   <script src="coi-serviceworker.js"></script>
@@ -19,6 +19,15 @@
 
   <!-- Monaco Editor AMD loader -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js" crossorigin="anonymous"></script>
+
+  <!-- Mermaid.js Flowchart Graph Engine -->
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+    window.mermaid = mermaid;
+    try {
+      window.mermaid.initialize({ startOnLoad: false, theme: 'dark', flowchart: { curve: 'basis', htmlLabels: true } });
+    } catch(e) {}
+  </script>
 
   <!-- Compiler Engine (order matters: stdlib before compiler) -->
   <script src="stdlib.js" crossorigin="anonymous"></script>
@@ -38,12 +47,9 @@
       <nav class="menubar hide-mobile">
         <div class="menu-item">File</div>
         <div class="menu-item">Edit</div>
-        <div class="menu-item">Selection</div>
         <div class="menu-item">View</div>
-        <div class="menu-item">Go</div>
         <div class="menu-item">Run</div>
         <div class="menu-item">Terminal</div>
-        <div class="menu-item">Help</div>
       </nav>
     </div>
 
@@ -92,40 +98,24 @@
     <!-- Mobile Sidebar Backdrop Overlay -->
     <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
-    <!-- 1. ACTIVITY BAR (Far Left Vertical Bar - 48px) -->
+    <!-- 1. ACTIVITY BAR (Clean Minimal Left Bar: Explorer, Debug, Settings) -->
     <aside class="activity-bar" id="activity-bar">
       <div class="activity-group activity-top">
         <button class="activity-item active" id="act-explorer" data-view="explorer" title="Explorer (Ctrl+Shift+E)">
           <i class="codicon codicon-files"></i>
           <span class="active-indicator"></span>
         </button>
-        <button class="activity-item" id="act-stages" data-view="stages" title="Compilation Stages Viewer">
-          <i class="codicon codicon-circuit-board"></i>
+        <button class="activity-item" id="act-debug" data-view="debug" title="Run and Debug (Ctrl+Shift+D)">
+          <i class="codicon codicon-debug-alt"></i>
           <span class="active-indicator"></span>
         </button>
         <button class="activity-item" id="act-search" data-view="search" title="Search (Ctrl+Shift+F)">
           <i class="codicon codicon-search"></i>
           <span class="active-indicator"></span>
         </button>
-        <button class="activity-item" id="act-scm" data-view="scm" title="Source Control (Ctrl+Shift+G)">
-          <i class="codicon codicon-source-control"></i>
-          <span class="badge" id="scm-badge">1</span>
-          <span class="active-indicator"></span>
-        </button>
-        <button class="activity-item" id="act-debug" data-view="debug" title="Run and Debug (Ctrl+Shift+D)">
-          <i class="codicon codicon-debug-alt"></i>
-          <span class="active-indicator"></span>
-        </button>
-        <button class="activity-item" id="act-extensions" data-view="extensions" title="Extensions (Ctrl+Shift+X)">
-          <i class="codicon codicon-extensions"></i>
-          <span class="active-indicator"></span>
-        </button>
       </div>
 
       <div class="activity-group activity-bottom">
-        <button class="activity-item" id="act-accounts" title="Accounts">
-          <i class="codicon codicon-account"></i>
-        </button>
         <button class="activity-item" id="act-settings" data-view="settings" title="Manage Settings">
           <i class="codicon codicon-settings-gear"></i>
           <span class="active-indicator"></span>
@@ -133,7 +123,7 @@
       </div>
     </aside>
 
-    <!-- 2. PRIMARY SIDEBAR (Collapsible & Dynamic Views) -->
+    <!-- 2. PRIMARY SIDEBAR -->
     <aside class="sidebar" id="sidebar">
 
       <!-- View 1: Explorer -->
@@ -176,43 +166,7 @@
         </div>
       </div>
 
-      <!-- View 2: Compilation Stages Viewer (On-demand inspection) -->
-      <div class="sidebar-view" id="view-stages">
-        <div class="sidebar-header">
-          <span class="sidebar-title">COMPILATION STAGES</span>
-          <div class="sidebar-actions">
-            <button id="btn-stages-refresh" class="sidebar-action-btn" title="Re-compile & Update Stages">
-              <i class="codicon codicon-refresh"></i>
-            </button>
-          </div>
-        </div>
-        <div class="sidebar-view-content">
-          <p class="stage-info-desc">Explore build outputs without adding generated files to your workspace tab bar:</p>
-          <div class="stage-tabs-nav margin-top-6">
-            <button class="stage-nav-btn active" id="btn-stage-pp" data-stage="pp">
-              <i class="codicon codicon-file-code"></i> Preprocessed (.i)
-            </button>
-            <button class="stage-nav-btn" id="btn-stage-ast" data-stage="ast">
-              <i class="codicon codicon-type-hierarchy"></i> AST Tree (.ast)
-            </button>
-            <button class="stage-nav-btn" id="btn-stage-wat" data-stage="wat">
-              <i class="codicon codicon-file-binary"></i> WASM Text (.wat)
-            </button>
-            <button class="stage-nav-btn" id="btn-stage-sec" data-stage="sec">
-              <i class="codicon codicon-output"></i> Binary Sections
-            </button>
-          </div>
-          <div class="stage-viewer-box margin-top-12">
-            <div class="stage-viewer-header">
-              <span id="stage-viewer-title">Preprocessed Source</span>
-              <button id="btn-stage-copy" class="sidebar-action-btn" title="Copy Output"><i class="codicon codicon-copy"></i></button>
-            </div>
-            <pre class="stage-viewer-content" id="stage-viewer-content">// Press ▶ Run or Build to generate compilation stage outputs.</pre>
-          </div>
-        </div>
-      </div>
-
-      <!-- View 3: Search -->
+      <!-- View 2: Search -->
       <div class="sidebar-view" id="view-search">
         <div class="sidebar-header">
           <span class="sidebar-title">SEARCH</span>
@@ -245,40 +199,7 @@
         </div>
       </div>
 
-      <!-- View 4: Source Control (Git) -->
-      <div class="sidebar-view" id="view-scm">
-        <div class="sidebar-header">
-          <span class="sidebar-title">SOURCE CONTROL</span>
-          <div class="sidebar-actions">
-            <button id="btn-scm-commit" class="sidebar-action-btn" title="Commit Changes">
-              <i class="codicon codicon-check"></i>
-            </button>
-            <button id="btn-scm-refresh" class="sidebar-action-btn" title="Refresh Status">
-              <i class="codicon codicon-refresh"></i>
-            </button>
-          </div>
-        </div>
-        <div class="sidebar-view-content">
-          <div class="scm-commit-box">
-            <textarea id="scm-commit-msg" class="vscode-textarea" placeholder="Message (Ctrl+Enter to commit)" rows="2"></textarea>
-            <button id="btn-scm-commit-action" class="vscode-btn vscode-btn-primary full-width margin-top-6">
-              <i class="codicon codicon-check"></i> Commit
-            </button>
-          </div>
-          <div class="sidebar-section margin-top-12">
-            <div class="sidebar-section-header">
-              <i class="codicon codicon-chevron-down"></i>
-              <span>CHANGES</span>
-              <span class="badge" id="scm-changes-count">1</span>
-            </div>
-            <div class="sidebar-section-body" id="scm-changes-list">
-              <!-- Populated by JS -->
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- View 5: Run & Debug -->
+      <!-- View 3: Run & Debug -->
       <div class="sidebar-view" id="view-debug">
         <div class="sidebar-header">
           <span class="sidebar-title">RUN AND DEBUG</span>
@@ -298,17 +219,6 @@
             </div>
             <div class="sidebar-section-body debug-vars-tree" id="debug-variables-tree">
               <div class="dim font-11 padding-6">Start debugging or set breakpoints to inspect variables.</div>
-            </div>
-          </div>
-
-          <!-- Section: Watch -->
-          <div class="sidebar-section margin-top-12">
-            <div class="sidebar-section-header">
-              <i class="codicon codicon-chevron-down"></i>
-              <span>WATCH</span>
-            </div>
-            <div class="sidebar-section-body" id="debug-watch-tree">
-              <div class="dim font-11 padding-6">No watch expressions added.</div>
             </div>
           </div>
 
@@ -337,7 +247,7 @@
         </div>
       </div>
 
-      <!-- View 6: Settings -->
+      <!-- View 4: Settings -->
       <div class="sidebar-view" id="view-settings">
         <div class="sidebar-header">
           <span class="sidebar-title">SETTINGS</span>
@@ -457,10 +367,22 @@
       <!-- TERMINAL / PANEL RESIZE HANDLE -->
       <div class="terminal-resize" id="terminal-resize"></div>
 
-      <!-- 4. BOTTOM PANEL (Multi-tab: PROBLEMS, OUTPUT, DEBUG CONSOLE, TERMINAL) -->
+      <!-- 4. BOTTOM PANEL (Multi-tab: TERMINAL, FLOWCHART, ALGORITHM, COMPILATION STAGES, PROBLEMS, OUTPUT, DEBUG CONSOLE) -->
       <section class="terminal-panel" id="terminal-panel">
         <div class="terminal-header" id="terminal-header-bar">
           <div class="terminal-tabs">
+            <button class="terminal-tab active" id="ptab-terminal" data-panel="terminal">
+              <i class="codicon codicon-terminal"></i> TERMINAL
+            </button>
+            <button class="terminal-tab" id="ptab-flowchart" data-panel="flowchart">
+              <i class="codicon codicon-git-merge"></i> FLOWCHART
+            </button>
+            <button class="terminal-tab" id="ptab-algorithm" data-panel="algorithm">
+              <i class="codicon codicon-list-ordered"></i> ALGORITHM
+            </button>
+            <button class="terminal-tab" id="ptab-stages" data-panel="stages">
+              <i class="codicon codicon-circuit-board"></i> COMPILATION STAGES
+            </button>
             <button class="terminal-tab" id="ptab-problems" data-panel="problems">
               <i class="codicon codicon-error"></i> PROBLEMS <span class="badge badge-error" id="problems-count-badge">0</span>
             </button>
@@ -469,9 +391,6 @@
             </button>
             <button class="terminal-tab" id="ptab-debug" data-panel="debug">
               <i class="codicon codicon-debug-console"></i> DEBUG CONSOLE
-            </button>
-            <button class="terminal-tab active" id="ptab-terminal" data-panel="terminal">
-              <i class="codicon codicon-terminal"></i> TERMINAL
             </button>
           </div>
 
@@ -491,7 +410,51 @@
         <!-- Panel Contents -->
         <div class="panel-body-wrapper">
 
-          <!-- 1. Problems Panel Content -->
+          <!-- 1. Terminal Content -->
+          <div class="panel-body-content active" id="pbody-terminal">
+            <div class="terminal-body" id="terminal">
+              <div class="term-line term-sys">C Compiler IDE — Integrated Terminal [C11 WASM Runtime].</div>
+              <div class="term-line term-sys">Type code or press ▶ Run (Ctrl+Enter) to execute your C module.</div>
+            </div>
+          </div>
+
+          <!-- 2. Flowchart Panel Content -->
+          <div class="panel-body-content hidden" id="pbody-flowchart">
+            <div id="flowchart-panel-container" class="flowchart-container">
+              <div class="dim font-11 padding-6">Click refresh or switch to Flowchart view to render visual Mermaid graph.</div>
+            </div>
+          </div>
+
+          <!-- 3. Algorithm Panel Content -->
+          <div class="panel-body-content hidden" id="pbody-algorithm">
+            <div class="algorithm-box" id="algorithm-panel-container">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+          <!-- 4. Compilation Stages Panel Content -->
+          <div class="panel-body-content hidden" id="pbody-stages">
+            <div class="stage-tabs-nav-horizontal">
+              <button class="stage-nav-btn active" id="btn-stage-pp" data-stage="pp">
+                <i class="codicon codicon-file-code"></i> Preprocessed (.i)
+              </button>
+              <button class="stage-nav-btn" id="btn-stage-ast" data-stage="ast">
+                <i class="codicon codicon-type-hierarchy"></i> AST Tree (.ast)
+              </button>
+              <button class="stage-nav-btn" id="btn-stage-wat" data-stage="wat">
+                <i class="codicon codicon-file-binary"></i> WASM Text (.wat)
+              </button>
+              <button class="stage-nav-btn" id="btn-stage-sec" data-stage="sec">
+                <i class="codicon codicon-output"></i> Binary Sections
+              </button>
+              <button id="btn-stage-copy" class="vscode-btn margin-left-auto" title="Copy Output"><i class="codicon codicon-copy"></i> Copy Stage Output</button>
+            </div>
+            <div class="stage-viewer-box margin-top-6">
+              <pre class="stage-viewer-content" id="stage-viewer-content">// Press ▶ Run or Build to generate compilation stage outputs.</pre>
+            </div>
+          </div>
+
+          <!-- 5. Problems Panel Content -->
           <div class="panel-body-content hidden" id="pbody-problems">
             <div class="problems-list" id="problems-list">
               <div class="problems-empty">
@@ -501,14 +464,14 @@
             </div>
           </div>
 
-          <!-- 2. Output Panel Content -->
+          <!-- 6. Output Panel Content -->
           <div class="panel-body-content hidden" id="pbody-output">
             <div class="output-log" id="output-log">
               <div class="term-line term-sys">C Compiler Pipeline Output Log — Ready.</div>
             </div>
           </div>
 
-          <!-- 3. Debug Console Content -->
+          <!-- 7. Debug Console Content -->
           <div class="panel-body-content hidden" id="pbody-debug">
             <div class="debug-console-wrapper">
               <div class="debug-log" id="debug-log">
@@ -518,14 +481,6 @@
                 <span class="debug-prompt-symbol">&gt;</span>
                 <input type="text" id="debug-console-input" class="debug-console-input" placeholder="Evaluate expression or variable (e.g. sum, i)..." autocomplete="off" spellcheck="false" />
               </div>
-            </div>
-          </div>
-
-          <!-- 4. Terminal Content -->
-          <div class="panel-body-content active" id="pbody-terminal">
-            <div class="terminal-body" id="terminal">
-              <div class="term-line term-sys">C Compiler IDE — Integrated Terminal [C11 WASM Runtime].</div>
-              <div class="term-line term-sys">Type code or press ▶ Run (Ctrl+Enter) to execute your C module.</div>
             </div>
           </div>
 
@@ -540,9 +495,6 @@
     <div class="status-left">
       <span class="status-remote-badge" id="status-remote" title="WebAssembly Isolated Runtime">
         <i class="codicon codicon-remote"></i> C11 WASM
-      </span>
-      <span class="status-item" id="status-git" title="Git Branch">
-        <i class="codicon codicon-git-branch"></i> main*
       </span>
       <span class="status-item status-problems-btn" id="status-problems-item" title="Click to view Problems">
         <i class="codicon codicon-error"></i> <span id="status-err-count">0</span>
