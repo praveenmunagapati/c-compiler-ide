@@ -12,7 +12,7 @@
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 
   <!-- Codicon icons (VS Code icon font) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@vscode/codicons@0.0.36/dist/codicon.css" crossorigin="anonymous">
@@ -33,11 +33,17 @@
   <div class="toolbar" id="toolbar">
     <div class="toolbar-left">
       <div class="brand">
-        <div class="brand-icon">C</div>
+        <div class="brand-icon">
+          <i class="codicon codicon-code"></i>
+        </div>
         <span class="brand-title">C Compiler IDE</span>
+        <span class="brand-badge">C11 WASM</span>
       </div>
       <div class="toolbar-sep"></div>
-      <select id="preset-select" class="toolbar-select" aria-label="Code preset"></select>
+      <div class="preset-wrapper">
+        <i class="codicon codicon-library"></i>
+        <select id="preset-select" class="toolbar-select" aria-label="Code preset"></select>
+      </div>
     </div>
     <div class="toolbar-right">
       <button id="btn-new" class="toolbar-btn" title="New file (Ctrl+N)">
@@ -60,11 +66,19 @@
     <div class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <span class="sidebar-title">EXPLORER</span>
+        <div class="sidebar-actions">
+          <button id="btn-sidebar-new" class="sidebar-action-btn" title="New File (Ctrl+N)">
+            <i class="codicon codicon-new-file"></i>
+          </button>
+          <button id="btn-sidebar-clean" class="sidebar-action-btn" title="Clear Generated Files">
+            <i class="codicon codicon-trash"></i>
+          </button>
+        </div>
       </div>
       <div class="sidebar-section">
         <div class="sidebar-section-header" id="sidebar-project-header">
           <i class="codicon codicon-chevron-down"></i>
-          <span>PROJECT</span>
+          <span>PROJECT FILES</span>
         </div>
         <div class="file-tree" id="file-tree">
           <!-- Populated by JS -->
@@ -79,21 +93,38 @@
     <div class="workbench">
 
       <!-- TAB BAR -->
-      <div class="tab-bar" id="tab-bar">
-        <!-- Populated by JS -->
+      <div class="tab-bar-container">
+        <div class="tab-bar" id="tab-bar">
+          <!-- Populated by JS -->
+        </div>
       </div>
 
       <!-- EDITOR -->
       <div class="editor-area" id="editor-area">
         <div id="monaco-editor"></div>
+
         <!-- Welcome screen when no tabs are open -->
         <div class="welcome-screen" id="welcome-screen">
-          <div class="welcome-icon">C</div>
-          <h2>C Compiler IDE</h2>
-          <p>Open a file from the explorer, or create a new one.</p>
-          <div class="welcome-shortcuts">
-            <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd> Build &amp; Run</div>
-            <div><kbd>Ctrl</kbd>+<kbd>N</kbd> New File</div>
+          <div class="welcome-card">
+            <div class="welcome-icon">
+              <i class="codicon codicon-code"></i>
+            </div>
+            <h2>C Compiler IDE</h2>
+            <p>Build, test, and run C programs inside WebAssembly with interactive virtual files.</p>
+
+            <div class="welcome-actions">
+              <button class="welcome-btn welcome-btn-primary" id="btn-welcome-new">
+                <i class="codicon codicon-new-file"></i> Create New File
+              </button>
+              <button class="welcome-btn welcome-btn-secondary" id="btn-welcome-preset">
+                <i class="codicon codicon-sparkle"></i> Load Preset Code
+              </button>
+            </div>
+
+            <div class="welcome-shortcuts">
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> <span>Build &amp; Run Active File</span></div>
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>N</kbd> <span>Create New File</span></div>
+            </div>
           </div>
         </div>
       </div>
@@ -106,14 +137,14 @@
         <div class="terminal-header">
           <div class="terminal-tabs">
             <span class="terminal-tab active">
-              <i class="codicon codicon-terminal"></i> Terminal
+              <i class="codicon codicon-terminal"></i> Output / Terminal
             </span>
           </div>
           <div class="terminal-actions">
             <button class="terminal-action-btn" id="btn-clear-term" title="Clear Terminal">
-              <i class="codicon codicon-clear-all"></i>
+              <i class="codicon codicon-clear-all"></i> Clear
             </button>
-            <button class="terminal-action-btn" id="btn-toggle-term" title="Toggle Terminal">
+            <button class="terminal-action-btn" id="btn-toggle-term" title="Toggle Panel">
               <i class="codicon codicon-chevron-down"></i>
             </button>
           </div>
@@ -128,14 +159,46 @@
   <!-- ═══════════ STATUS BAR ═══════════ -->
   <div class="status-bar" id="status-bar">
     <div class="status-left">
-      <span class="status-item" id="status-build">
+      <span class="status-item status-badge-ok" id="status-build">
         <i class="codicon codicon-check"></i> Ready
       </span>
     </div>
     <div class="status-right">
-      <span class="status-item" id="status-file">main.c</span>
-      <span class="status-item" id="status-lang">C</span>
+      <span class="status-item" id="status-file"><i class="codicon codicon-file"></i> main.c</span>
+      <span class="status-item" id="status-lang"><i class="codicon codicon-code"></i> C</span>
       <span class="status-item" id="status-cursor">Ln 1, Col 1</span>
+    </div>
+  </div>
+
+  <!-- ═══════════ CONTEXT MENU ═══════════ -->
+  <div id="context-menu" class="context-menu hidden">
+    <div class="context-menu-item" id="ctx-open">
+      <i class="codicon codicon-file"></i> Open
+    </div>
+    <div class="context-menu-item" id="ctx-rename">
+      <i class="codicon codicon-edit"></i> Rename
+    </div>
+    <div class="context-menu-divider"></div>
+    <div class="context-menu-item danger" id="ctx-delete">
+      <i class="codicon codicon-trash"></i> Delete
+    </div>
+  </div>
+
+  <!-- ═══════════ MODAL DIALOG ═══════════ -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 id="modal-title">New File</h3>
+        <button id="btn-modal-close" class="modal-close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p id="modal-desc">Enter a file name (e.g. <code>my_program.c</code> or <code>helpers.h</code>):</p>
+        <input type="text" id="modal-input" class="modal-input" placeholder="filename.c" spellcheck="false" autocomplete="off" />
+      </div>
+      <div class="modal-footer">
+        <button id="btn-modal-cancel" class="modal-btn">Cancel</button>
+        <button id="btn-modal-confirm" class="modal-btn modal-btn-primary">Confirm</button>
+      </div>
     </div>
   </div>
 

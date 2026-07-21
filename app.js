@@ -1,11 +1,12 @@
 /**
  * C Compiler IDE — VS Code-inspired Application Logic
  *
- * Architecture:
- *   VFS (Virtual File System)  →  file storage in memory
- *   TabManager                 →  open/close/switch editor tabs (Monaco models)
- *   FileExplorer               →  sidebar tree rendered from VFS
- *   Compiler Pipeline          →  tokenize → parse → codegen → execute
+ * Features:
+ *   - Virtual File System (VFS) with create, edit, rename, delete
+ *   - Multi-tab Monaco Editor with custom dark theme
+ *   - File Explorer with hover actions & right-click context menu
+ *   - C11 WebAssembly Compiler Pipeline (Preprocess, AST, WAT, WASM Execution)
+ *   - Interactive Modal Prompts
  */
 (function () {
   "use strict";
@@ -32,8 +33,71 @@
     ],
     structs: [
       'Structs & Typedef',
-      '#include <stdio.h>\n\ntypedef struct {\n    int x;\n    int y;\n} Point;\n\nPoint add(Point a, Point b) {\n    Point r = { a.x + b.x, a.y + b.y };\n    return r;\n}\n\nint main(void) {\n    Point p = add((Point){1, 2}, (Point){3, 4});\n    printf("(%d, %d)\\n", p.x, p.y);\n    return 0;\n}\n'
+      '#include <stdio.h>\n\ntypedef struct {\n    int x;\n    int y;\n} Point;\n\nPoint add(Point a, Point b) {\n    Point r = { a.x + b.x, a.y + b.y };\n    return r;\n}\n\nint main(void) {\n    Point p = add((Point){1, 2}, (Point){3, 4});\n    printf("Point sum: (%d, %d)\\n", p.x, p.y);\n    return 0;\n}\n'
     ],
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
+     MODAL & CONTEXT MENU SYSTEM
+     ══════════════════════════════════════════════════════════════════════ */
+  const Modal = {
+    show({ title, desc, placeholder, defaultValue, confirmText, isDanger, onConfirm }) {
+      $('modal-title').textContent = title || 'Input';
+      $('modal-desc').innerHTML = desc || '';
+      const input = $('modal-input');
+      input.placeholder = placeholder || '';
+      input.value = defaultValue || '';
+
+      const confirmBtn = $('btn-modal-confirm');
+      confirmBtn.textContent = confirmText || 'Confirm';
+      if (isDanger) {
+        confirmBtn.style.background = 'var(--red)';
+      } else {
+        confirmBtn.style.background = 'var(--blue)';
+      }
+
+      $('modal-overlay').classList.remove('hidden');
+      setTimeout(() => {
+        input.focus();
+        input.select();
+      }, 50);
+
+      const handleConfirm = () => {
+        const val = input.value.trim();
+        this.close();
+        if (onConfirm) onConfirm(val);
+      };
+
+      confirmBtn.onclick = handleConfirm;
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter') handleConfirm();
+        if (e.key === 'Escape') this.close();
+      };
+      $('btn-modal-cancel').onclick = () => this.close();
+      $('btn-modal-close').onclick = () => this.close();
+    },
+    close() {
+      $('modal-overlay').classList.add('hidden');
+    }
+  };
+
+  const ContextMenu = {
+    _targetPath: null,
+    show(x, y, path) {
+      this._targetPath = path;
+      const menu = $('context-menu');
+      menu.style.left = Math.min(x, window.innerWidth - 170) + 'px';
+      menu.style.top = Math.min(y, window.innerHeight - 150) + 'px';
+      menu.classList.remove('hidden');
+
+      const file = VFS.read(path);
+      const isGen = file?.generated || file?.readOnly;
+      $('ctx-rename').style.display = isGen ? 'none' : 'flex';
+      $('ctx-delete').style.display = isGen ? 'none' : 'flex';
+    },
+    hide() {
+      $('context-menu').classList.add('hidden');
+    }
   };
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -50,6 +114,7 @@
         readOnly: opts.readOnly || false,
         generated: opts.generated || false,
       });
+      FileExplorer.render();
     },
 
     /** Read a file. Returns null if not found. */
@@ -64,13 +129,28 @@
 
     /** Delete a file. */
     remove(path) {
+      if (!this._files.has(path)) return;
       this._files.delete(path);
+      Tabs.close(path);
+      FileExplorer.render();
+    },
+
+    /** Rename a file. */
+    rename(oldPath, newPath) {
+      if (!oldPath || !newPath || oldPath === newPath) return;
+      if (!this._files.has(oldPath)) return;
+      const fileData = this._files.get(oldPath);
+      this._files.delete(oldPath);
+      fileData.language = langFromExt(newPath);
+      this._files.set(newPath, fileData);
+
+      Tabs.rename(oldPath, newPath);
+      FileExplorer.render();
     },
 
     /** List all file paths. */
     list() {
       return Array.from(this._files.keys()).sort((a, b) => {
-        // User files first, then generated
         const aGen = this._files.get(a).generated ? 1 : 0;
         const bGen = this._files.get(b).generated ? 1 : 0;
         if (aGen !== bGen) return aGen - bGen;
@@ -81,7 +161,9 @@
     /** Clear all generated files. */
     clearGenerated() {
       for (const [path, file] of this._files) {
-        if (file.generated) this._files.delete(path);
+        if (file.generated) {
+          this.remove(path);
+        }
       }
     },
   };
@@ -128,7 +210,6 @@
       const idx = this._open.indexOf(path);
       if (idx === -1) return;
       this._open.splice(idx, 1);
-      // If closing the active tab, switch to neighbor
       if (this._active === path) {
         if (this._open.length > 0) {
           this._active = this._open[Math.min(idx, this._open.length - 1)];
@@ -138,12 +219,30 @@
           this._hideEditor();
         }
       }
-      // Dispose the model if generated (save memory)
-      if (this._models[path] && VFS.read(path)?.generated) {
+      if (this._models[path]) {
         this._models[path].dispose();
         delete this._models[path];
       }
       this._render();
+    },
+
+    /** Rename an open tab. */
+    rename(oldPath, newPath) {
+      const idx = this._open.indexOf(oldPath);
+      if (idx !== -1) {
+        this._open[idx] = newPath;
+      }
+      if (this._active === oldPath) {
+        this._active = newPath;
+      }
+      if (this._models[oldPath]) {
+        this._models[newPath] = this._models[oldPath];
+        delete this._models[oldPath];
+      }
+      this._render();
+      if (this._active === newPath) {
+        this._showEditor(newPath);
+      }
     },
 
     /** Close all generated-file tabs. */
@@ -157,7 +256,7 @@
 
     /** Ensure a Monaco model exists for a file. */
     _ensureModel(path) {
-      if (this._models[path]) return;
+      if (!window.monaco) return;
       const file = VFS.read(path);
       if (!file) return;
       const lang = file.language || 'plaintext';
@@ -166,13 +265,15 @@
       if (!model) {
         model = monaco.editor.createModel(file.content, lang, uri);
       } else {
-        model.setValue(file.content);
+        if (model.getValue() !== file.content) {
+          model.setValue(file.content);
+        }
         monaco.editor.setModelLanguage(model, lang);
       }
       this._models[path] = model;
     },
 
-    /** Update the model content for a path (e.g., after rebuild). */
+    /** Update model content for a path (e.g., after rebuild). */
     updateModel(path) {
       const file = VFS.read(path);
       if (!file) return;
@@ -183,7 +284,9 @@
 
     /** Show the editor for a path. */
     _showEditor(path) {
-      if (!editor || !this._models[path]) return;
+      if (!editor) return;
+      this._ensureModel(path);
+      if (!this._models[path]) return;
       const file = VFS.read(path);
       editor.setModel(this._models[path]);
       editor.updateOptions({ readOnly: file?.readOnly || false });
@@ -218,12 +321,11 @@
           (file?.readOnly ? '<span class="tab-readonly">read-only</span>' : '') +
           `<span class="tab-close codicon codicon-close" data-close="${esc(path)}"></span>`;
 
-        // Click tab → switch
         tab.addEventListener('click', (e) => {
           if (e.target.dataset.close !== undefined) return;
           this.open(path);
         });
-        // Click × → close
+
         tab.querySelector('.tab-close').addEventListener('click', (e) => {
           e.stopPropagation();
           this.close(path);
@@ -242,6 +344,7 @@
       const tree = $('file-tree');
       tree.innerHTML = '';
       const files = VFS.list();
+
       for (const path of files) {
         const file = VFS.read(path);
         const ic = fileIcon(path);
@@ -252,19 +355,108 @@
         let badge = '';
         if (file.generated) badge = '<span class="file-badge">gen</span>';
 
+        let actionButtons = '';
+        if (!file.generated && !file.readOnly) {
+          actionButtons =
+            `<div class="file-actions">` +
+              `<span class="file-action-icon btn-rename-file" title="Rename"><i class="codicon codicon-edit"></i></span>` +
+              `<span class="file-action-icon danger btn-delete-file" title="Delete"><i class="codicon codicon-trash"></i></span>` +
+            `</div>`;
+        }
+
         item.innerHTML =
           `<i class="codicon ${ic.icon} file-icon ${ic.cls}"></i>` +
           `<span class="file-name">${esc(path)}</span>` +
-          badge;
+          badge +
+          actionButtons;
 
-        item.addEventListener('click', () => Tabs.open(path));
+        // Click item -> open
+        item.addEventListener('click', (e) => {
+          if (e.target.closest('.file-actions')) return;
+          Tabs.open(path);
+        });
+
+        // Right-click context menu
+        item.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          ContextMenu.show(e.clientX, e.clientY, path);
+        });
+
+        // Hover action buttons
+        const renameBtn = item.querySelector('.btn-rename-file');
+        if (renameBtn) {
+          renameBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            renameFile(path);
+          });
+        }
+
+        const deleteBtn = item.querySelector('.btn-delete-file');
+        if (deleteBtn) {
+          deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteFile(path);
+          });
+        }
+
         tree.appendChild(item);
       }
     },
   };
 
   /* ══════════════════════════════════════════════════════════════════════
-     MONACO EDITOR
+     FILE ACTIONS (NEW, RENAME, DELETE)
+     ══════════════════════════════════════════════════════════════════════ */
+  function createNewFile() {
+    Modal.show({
+      title: 'Create New File',
+      desc: 'Enter file name (e.g. <code>my_program.c</code> or <code>helpers.h</code>):',
+      placeholder: 'untitled.c',
+      defaultValue: 'my_program.c',
+      confirmText: 'Create File',
+      onConfirm: (name) => {
+        if (!name) return;
+        if (!name.includes('.')) name += '.c';
+        if (VFS.exists(name)) {
+          Tabs.open(name);
+          return;
+        }
+        VFS.write(name, `// ${name}\n#include <stdio.h>\n\nint main(void) {\n    printf("Hello from ${name}!\\n");\n    return 0;\n}\n`, { language: langFromExt(name) });
+        Tabs.open(name);
+      }
+    });
+  }
+
+  function renameFile(oldPath) {
+    if (!VFS.exists(oldPath)) return;
+    Modal.show({
+      title: 'Rename File',
+      desc: `Enter new name for <code>${esc(oldPath)}</code>:`,
+      defaultValue: oldPath,
+      confirmText: 'Rename',
+      onConfirm: (newName) => {
+        if (!newName || newName === oldPath) return;
+        if (!newName.includes('.')) newName += '.c';
+        VFS.rename(oldPath, newName);
+      }
+    });
+  }
+
+  function deleteFile(path) {
+    if (!VFS.exists(path)) return;
+    Modal.show({
+      title: 'Delete File',
+      desc: `Are you sure you want to delete <code>${esc(path)}</code>?`,
+      confirmText: 'Delete File',
+      isDanger: true,
+      onConfirm: () => {
+        VFS.remove(path);
+      }
+    });
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     MONACO EDITOR SETUP
      ══════════════════════════════════════════════════════════════════════ */
   let editor = null;
 
@@ -277,43 +469,43 @@
       paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs' }
     });
     require(['vs/editor/editor.main'], () => {
-      monaco.editor.defineTheme('ide-dark', {
+      monaco.editor.defineTheme('ide-slate-dark', {
         base: 'vs-dark', inherit: true,
         rules: [
-          { token: 'keyword',  foreground: '569cd6', fontStyle: 'bold' },
-          { token: 'type',     foreground: '4ec9b0' },
-          { token: 'string',   foreground: 'ce9178' },
-          { token: 'number',   foreground: 'b5cea8' },
-          { token: 'comment',  foreground: '6a9955', fontStyle: 'italic' },
+          { token: 'keyword',  foreground: '60a5fa', fontStyle: 'bold' },
+          { token: 'type',     foreground: '34d399' },
+          { token: 'string',   foreground: 'fb923c' },
+          { token: 'number',   foreground: 'f59e0b' },
+          { token: 'comment',  foreground: '64748b', fontStyle: 'italic' },
         ],
         colors: {
-          'editor.background':                '#1e1e1e',
-          'editor.lineHighlightBackground':   '#2a2d2e',
-          'editorLineNumber.foreground':       '#858585',
-          'editorLineNumber.activeForeground': '#c6c6c6',
+          'editor.background':                '#090d16',
+          'editor.lineHighlightBackground':   '#1e293b55',
+          'editorLineNumber.foreground':       '#475569',
+          'editorLineNumber.activeForeground': '#94a3b8',
         }
       });
 
       editor = monaco.editor.create($('monaco-editor'), {
-        theme: 'ide-dark',
-        fontFamily: "'Fira Code', 'Cascadia Code', Consolas, monospace",
+        theme: 'ide-slate-dark',
+        fontFamily: "'Fira Code', Consolas, monospace",
         fontSize: 14,
-        lineHeight: 20,
+        lineHeight: 22,
         minimap: { enabled: false },
         automaticLayout: true,
         tabSize: 4,
         scrollBeyondLastLine: false,
-        padding: { top: 8, bottom: 8 },
+        padding: { top: 10, bottom: 10 },
         renderWhitespace: 'selection',
         bracketPairColorization: { enabled: true },
       });
 
-      // Track cursor for status bar
+      // Track cursor position for status bar
       editor.onDidChangeCursorPosition((e) => {
         $('status-cursor').textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
       });
 
-      // Save editor content back to VFS on change
+      // Save editor changes to VFS
       editor.onDidChangeModelContent(() => {
         const path = Tabs.getActive();
         if (path && VFS.exists(path)) {
@@ -324,7 +516,7 @@
         }
       });
 
-      // Ctrl+Enter shortcut
+      // Shortcut: Ctrl+Enter -> Build & Run
       editor.addAction({
         id: 'run-program',
         label: 'Build & Run',
@@ -332,16 +524,16 @@
         run: () => runPipeline(true),
       });
 
-      // Open the default file
+      // Open initial default file
       Tabs.open('main.c');
     });
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     INIT
+     INIT & EVENT BINDINGS
      ══════════════════════════════════════════════════════════════════════ */
   window.addEventListener('DOMContentLoaded', () => {
-    // Initialize VFS with default file
+    // Populate VFS with default hello.c program
     VFS.write('main.c', PRESETS.hello[1], { language: 'c' });
 
     populatePresets();
@@ -352,6 +544,7 @@
 
   function populatePresets() {
     const sel = $('preset-select');
+    sel.innerHTML = '';
     for (const [key, [label]] of Object.entries(PRESETS)) {
       const opt = document.createElement('option');
       opt.value = key;
@@ -374,10 +567,40 @@
     $('btn-run').onclick    = () => runPipeline(true);
     $('btn-new').onclick    = () => createNewFile();
 
+    $('btn-sidebar-new').onclick   = () => createNewFile();
+    $('btn-sidebar-clean').onclick = () => {
+      Tabs.closeGenerated();
+      VFS.clearGenerated();
+    };
+
+    $('btn-welcome-new').onclick    = () => createNewFile();
+    $('btn-welcome-preset').onclick = () => Tabs.open('main.c');
+
     $('btn-clear-term').onclick = () => { $('terminal').innerHTML = ''; };
     $('btn-toggle-term').onclick = () => {
       $('terminal-panel').classList.toggle('collapsed');
     };
+
+    // Context Menu Item Listeners
+    $('ctx-open').onclick = () => {
+      if (ContextMenu._targetPath) Tabs.open(ContextMenu._targetPath);
+      ContextMenu.hide();
+    };
+    $('ctx-rename').onclick = () => {
+      if (ContextMenu._targetPath) renameFile(ContextMenu._targetPath);
+      ContextMenu.hide();
+    };
+    $('ctx-delete').onclick = () => {
+      if (ContextMenu._targetPath) deleteFile(ContextMenu._targetPath);
+      ContextMenu.hide();
+    };
+
+    // Close Context Menu on click outside
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('#context-menu')) {
+        ContextMenu.hide();
+      }
+    });
 
     // Global keyboard shortcuts
     document.addEventListener('keydown', (e) => {
@@ -397,27 +620,13 @@
     initResize($('terminal-resize'), 'terminal-panel', 'vertical');
   }
 
-  /* ── Create New File ────────────────────────────────────────────────── */
-  function createNewFile() {
-    let name = prompt('New file name:', 'untitled.c');
-    if (!name) return;
-    if (!name.includes('.')) name += '.c';
-    if (VFS.exists(name)) {
-      Tabs.open(name);
-      return;
-    }
-    VFS.write(name, '// ' + name + '\n', { language: langFromExt(name) });
-    FileExplorer.render();
-    Tabs.open(name);
-  }
-
   /* ── Resize Handles ─────────────────────────────────────────────────── */
   function initResize(handle, targetId, direction) {
     let startPos, startSize;
     const onMouseMove = (e) => {
       const el = $(targetId);
       if (direction === 'horizontal') {
-        el.style.width = Math.max(140, startSize + (e.clientX - startPos)) + 'px';
+        el.style.width = Math.max(160, startSize + (e.clientX - startPos)) + 'px';
       } else {
         el.style.height = Math.max(80, startSize - (e.clientY - startPos)) + 'px';
       }
@@ -442,9 +651,9 @@
   function updateStatusBar() {
     const path = Tabs.getActive();
     if (path) {
-      $('status-file').textContent = path;
+      $('status-file').innerHTML = `<i class="codicon ${fileIcon(path).icon}"></i> ${esc(path)}`;
       const file = VFS.read(path);
-      $('status-lang').textContent = (file?.language || 'plaintext').toUpperCase();
+      $('status-lang').innerHTML = `<i class="codicon codicon-code"></i> ${(file?.language || 'plaintext').toUpperCase()}`;
     } else {
       $('status-file').textContent = '';
       $('status-lang').textContent = '';
@@ -453,89 +662,111 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     COMPILER PIPELINE
+     COMPILER PIPELINE (DYNAMIC MULTI-FILE & ACTIVE ENTRY POINT)
      ══════════════════════════════════════════════════════════════════════ */
   function runPipeline(execute) {
     const CJS = window.CompilerJS;
     if (!CJS) {
-      termLog('CompilerJS not loaded.', 'err');
+      termLog('CompilerJS engine not loaded.', 'err');
       return;
     }
 
-    // Get main.c source
-    const mainFile = VFS.read('main.c');
-    if (!mainFile) { termLog('No main.c found.', 'err'); return; }
-    const source = mainFile.content;
+    // Determine active C entry file
+    let entryPath = Tabs.getActive();
+    if (!entryPath || !entryPath.endsWith('.c') || !VFS.exists(entryPath)) {
+      if (VFS.exists('main.c')) {
+        entryPath = 'main.c';
+      } else {
+        const cFiles = VFS.list().filter(p => p.endsWith('.c') && !VFS.read(p).generated);
+        entryPath = cFiles.length > 0 ? cFiles[0] : null;
+      }
+    }
 
-    // Ensure terminal is visible
+    if (!entryPath) {
+      termLog('No C source file (.c) available to compile.', 'err');
+      return;
+    }
+
+    const entryFile = VFS.read(entryPath);
+    if (!entryFile) {
+      termLog(`File ${entryPath} not found.`, 'err');
+      return;
+    }
+
+    const source = entryFile.content;
+    const baseName = entryPath.includes('.') ? entryPath.substring(0, entryPath.lastIndexOf('.')) : entryPath;
+
+    // Ensure terminal is open
     $('terminal-panel').classList.remove('collapsed');
 
     const term = $('terminal');
     term.innerHTML = '';
-    termLog('[Build] Starting compilation…');
+    termLog(`[Build] Compiling target: ${entryPath}…`);
 
     const errors = [];
     const warnings = [];
 
     try {
       // ── Stage 1: Preprocess ──────────────────────────────────────
-      const ppText = extractPreprocessed(CJS, source, errors);
-      VFS.write('main.i', ppText, { language: 'c', readOnly: true, generated: true });
-      termLog('[1/4] Preprocessed → main.i');
+      const ppText = extractPreprocessed(CJS, entryPath, source, errors);
+      const ppFile = baseName + '.i';
+      VFS.write(ppFile, ppText, { language: 'c', readOnly: true, generated: true });
+      termLog(`[1/4] Preprocessed → ${ppFile}`);
 
       // ── Stage 2: AST ─────────────────────────────────────────────
-      const astText = extractAST(CJS, source, errors);
-      VFS.write('main.ast', astText, { language: 'plaintext', readOnly: true, generated: true });
-      termLog('[2/4] Parsed → main.ast');
+      const astText = extractAST(CJS, entryPath, source, errors);
+      const astFile = baseName + '.ast';
+      VFS.write(astFile, astText, { language: 'plaintext', readOnly: true, generated: true });
+      termLog(`[2/4] Parsed AST → ${astFile}`);
 
-      // ── Stage 3: Codegen ─────────────────────────────────────────
-      const wasmInfo = extractWasm(CJS, source, errors, warnings);
-      VFS.write('main.wat', wasmInfo.wastText, { language: 'plaintext', readOnly: true, generated: true });
+      // ── Stage 3: WASM Codegen ────────────────────────────────────
+      const wasmInfo = extractWasm(CJS, entryPath, source, errors, warnings);
+      const watFile = baseName + '.wat';
+      VFS.write(watFile, wasmInfo.wastText, { language: 'plaintext', readOnly: true, generated: true });
 
       // Section summary
-      let sectionSummary = '=== WASM Binary Sections ===\n\n';
+      let sectionSummary = `=== WASM Binary Sections for ${entryPath} ===\n\n`;
       for (const sec of wasmInfo.sections) {
         sectionSummary += `Section ${sec.id} (${sec.name}): ${sec.length.toLocaleString()} bytes @ offset ${sec.offset}\n`;
       }
       sectionSummary += `\nTotal: ${wasmInfo.bytes.length.toLocaleString()} bytes, ${wasmInfo.sections.length} sections\n`;
       VFS.write('a.wasm.txt', sectionSummary, { language: 'plaintext', readOnly: true, generated: true });
 
-      termLog(`[3/4] Codegen → main.wat (${wasmInfo.bytes.length} bytes WASM)`);
+      termLog(`[3/4] WASM Codegen → ${watFile} (${wasmInfo.bytes.length} bytes)`);
 
-      // Show warnings
+      // Show compile warnings
       for (const w of warnings) {
         termLog(`[Warning] ${w}`, 'warn');
       }
 
-      // Update models for any already-open generated tabs
-      for (const p of ['main.i', 'main.ast', 'main.wat', 'a.wasm.txt']) {
+      // Update models for generated tabs
+      for (const p of [ppFile, astFile, watFile, 'a.wasm.txt']) {
         Tabs.updateModel(p);
       }
 
       FileExplorer.render();
 
-      // Open generated files as tabs
-      Tabs.open('main.i');
-      Tabs.open('main.ast');
-      Tabs.open('main.wat');
+      // Open generated files as tabs for visualizer
+      Tabs.open(ppFile);
+      Tabs.open(astFile);
+      Tabs.open(watFile);
 
-      // Switch to main.c tab as primary
-      Tabs.open('main.c');
+      // Return active focus to entry C source file
+      Tabs.open(entryPath);
 
-      setBuildStatus('success', `Build OK — ${wasmInfo.bytes.length} bytes`);
+      setBuildStatus('success', `Build OK (${wasmInfo.bytes.length} B)`);
 
       if (execute) {
-        termLog('[4/4] Executing…');
+        termLog('[4/4] Executing WebAssembly module…');
         executeWasm(wasmInfo.bytes);
       } else {
         termLog('[Build] Done. Press ▶ Run to execute.');
-        // Open the WAT tab to show build output
-        Tabs.open('main.wat');
+        Tabs.open(watFile);
       }
 
     } catch (err) {
       for (const e of errors) termLog(`[Error] ${e}`, 'err');
-      termLog(`[Error] ${err.message}`, 'err');
+      if (err.message) termLog(`[Error] ${err.message}`, 'err');
       setBuildStatus('error', 'Build failed');
     }
   }
@@ -543,10 +774,13 @@
   function setBuildStatus(type, text) {
     const el = $('status-build');
     if (type === 'success') {
+      el.className = 'status-item status-badge-ok';
       el.innerHTML = `<i class="codicon codicon-check"></i> ${esc(text)}`;
     } else if (type === 'error') {
+      el.className = 'status-item status-badge-err';
       el.innerHTML = `<i class="codicon codicon-error"></i> ${esc(text)}`;
     } else {
+      el.className = 'status-item';
       el.innerHTML = `<i class="codicon codicon-loading codicon-modifier-spin"></i> ${esc(text)}`;
     }
   }
@@ -564,14 +798,14 @@
      ══════════════════════════════════════════════════════════════════════ */
 
   /* ── Stage 1: Preprocessor ─────────────────────────────────────────── */
-  function extractPreprocessed(CJS, source, errors) {
+  function extractPreprocessed(CJS, filename, source, errors) {
     const pp = CJS.createDefaultPPRegistry();
-    const result = CJS.tokenize(CJS.intern('main.c'), source, pp);
+    const result = CJS.tokenize(CJS.intern(filename), source, pp);
 
     if (result.errors && result.errors.length > 0) {
       for (const err of result.errors)
-        errors.push(`${err.filename || 'main.c'}:${err.line}: ${err.message}`);
-      return '// Preprocessing failed — see terminal for errors.';
+        errors.push(`${err.filename || filename}:${err.line}: ${err.message}`);
+      return '// Preprocessing failed — see terminal for details.';
     }
 
     const tokens = result.tokens;
@@ -607,14 +841,14 @@
   }
 
   /* ── Stage 2: AST ──────────────────────────────────────────────────── */
-  function extractAST(CJS, source, errors) {
+  function extractAST(CJS, filename, source, errors) {
     const pp = CJS.createDefaultPPRegistry();
-    const result = CJS.parseSource(CJS.intern('main.c'), source, pp);
+    const result = CJS.parseSource(CJS.intern(filename), source, pp);
 
     if (result.errors && result.errors.length > 0) {
       for (const err of result.errors)
-        errors.push(`${err.filename || 'main.c'}:${err.line}: ${err.message}`);
-      return '// Parsing failed — see terminal for errors.';
+        errors.push(`${err.filename || filename}:${err.line}: ${err.message}`);
+      return '// Parsing failed — see terminal for details.';
     }
 
     const rawAst = CJS.dumpAst([result.translationUnit]);
@@ -728,15 +962,18 @@
     return s;
   }
 
-  /* ── Stages 3 & 4: WASM codegen ────────────────────────────────────── */
-  function extractWasm(CJS, source, errors, warnings) {
+  /* ── Stages 3 & 4: WASM Codegen ────────────────────────────────────── */
+  function extractWasm(CJS, filename, source, errors, warnings) {
     let bytes = null;
     let wastText = '';
     let sections = [];
 
+    // Virtual filesystem bridging CJS compiler calls to VFS
     const fakeFs = {
       readFileSync: (path) => {
-        if (path === 'main.c') return source;
+        const cleanPath = path.replace(/^\/+/, '');
+        const f = VFS.read(cleanPath) || VFS.read(path);
+        if (f) return f.content;
         throw new Error('File not found: ' + path);
       }
     };
@@ -750,8 +987,12 @@
       allowEmptyParams: true,
     };
 
+    // Gather all user .c files in VFS, placing current entry point first
+    const allCFiles = VFS.list().filter(p => p.endsWith('.c') && !VFS.read(p).generated);
+    const compileUnits = [filename].concat(allCFiles.filter(p => p !== filename));
+
     try {
-      const units = CJS.parseAllUnits(fakeFs, pp, ['main.c'], {
+      const units = CJS.parseAllUnits(fakeFs, pp, compileUnits, {
         warningFlags: { pointerDecay: false, circularDependency: false },
         compilerOptions,
         writeErr,
@@ -759,7 +1000,7 @@
 
       const linkResult = CJS.linkTranslationUnits(units, compilerOptions);
       if (linkResult.errors && linkResult.errors.length > 0) {
-        for (const err of linkResult.errors) errors.push('Link: ' + err.message);
+        for (const err of linkResult.errors) errors.push('Link Error: ' + err.message);
         return { bytes: new Uint8Array(0), wastText: ';; Linking failed', sections: [] };
       }
 
@@ -769,7 +1010,7 @@
       if (e.compilationFailed && compileErrors.length > 0) {
         for (const msg of compileErrors) errors.push(msg);
       } else {
-        errors.push(e.message);
+        errors.push(e.message || String(e));
       }
     }
 
@@ -784,7 +1025,7 @@
     return { bytes, wastText, sections };
   }
 
-  /* ── WASM binary parser ────────────────────────────────────────────── */
+  /* ── WASM Binary Parser ────────────────────────────────────────────── */
   const SECTION_NAMES = {
     0:'Custom',1:'Type',2:'Import',3:'Function',4:'Table',5:'Memory',
     6:'Global',7:'Export',8:'Start',9:'Element',10:'Code',11:'Data',12:'DataCount',
@@ -827,10 +1068,10 @@
     return out;
   }
 
-  /* ── Stage 5: Execute ──────────────────────────────────────────────── */
+  /* ── Stage 5: WASM WebWorker Execution ────────────────────────────── */
   function executeWasm(bytes) {
     if (!bytes || bytes.length === 0) {
-      termLog('[Runtime] No WASM bytes to execute.', 'err');
+      termLog('[Runtime] No WASM binary available to execute.', 'err');
       return;
     }
 
@@ -881,7 +1122,7 @@
         } else if (m.type === 'stderr') {
           termLog(m.text, 'err');
         } else if (m.type === 'exit') {
-          termLog(`[Exit] Process exited with code ${m.code}`);
+          termLog(`[Process Exited] Return code: ${m.code}`);
           worker.terminate();
           URL.revokeObjectURL(url);
         } else if (m.type === 'error') {
@@ -892,7 +1133,7 @@
       };
 
       worker.onerror = (e) => {
-        termLog(`[Worker Error] ${e.message}`, 'err');
+        termLog(`[Worker Exception] ${e.message}`, 'err');
         worker.terminate();
         URL.revokeObjectURL(url);
       };
@@ -901,7 +1142,7 @@
       worker.postMessage({ type: 'run', bytes: buffer }, [buffer]);
 
     } catch (err) {
-      termLog(`[Worker] ${err.message}`, 'err');
+      termLog(`[Worker Exception] ${err.message}`, 'err');
     }
   }
 
