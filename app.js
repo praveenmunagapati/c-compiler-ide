@@ -4,8 +4,8 @@
  * Features:
  *   - VS Code Activity Bar & Multi-View Sidebar (Explorer, Stages, Search, SCM, Debug, Settings)
  *   - Clean Editor Tab Bar (Stage outputs stored in-memory in Stage Explorer)
- *   - Interactive C Debugger Engine (Monaco Gutter Breakpoints, Floating Toolbar, Stepping, Execution Pointer)
- *   - Live Variables Watcher, Call Stack Inspector, and Interactive Debug Console Evaluator
+ *   - C Pointer & Struct Memory Heap Simulator & Interactive Debugger
+ *   - Live Variables Watcher (Pointers, Structs, Members), Call Stack Inspector, and Interactive Debug Console Evaluator
  *   - Command Palette & Quick Open Overlay (Ctrl+Shift+P / Ctrl+P / F1)
  *   - Global VFS Search & Replace Engine
  */
@@ -16,6 +16,10 @@
      CODE PRESETS
      ══════════════════════════════════════════════════════════════════════ */
   const PRESETS = {
+    linkedlist: [
+      'Linked List Pointers & Structs',
+      `#include <stdio.h>\n#include <stdlib.h>\n\nstruct Node {\n    int data;\n    struct Node *next;\n};\n\nint main(void) {\n    struct Node *head = NULL;\n    struct Node *second = NULL;\n    struct Node *third = NULL;\n\n    head = (struct Node *)malloc(sizeof(struct Node));\n    second = (struct Node *)malloc(sizeof(struct Node));\n    third = (struct Node *)malloc(sizeof(struct Node));\n\n    if (!head || !second || !third) {\n        printf("Memory allocation failed\\n");\n        return 1;\n    }\n\n    head->data = 10;\n    head->next = second;\n\n    second->data = 20;\n    second->next = third;\n\n    third->data = 30;\n    third->next = NULL;\n\n    struct Node *temp = head;\n    while (temp != NULL) {\n        printf("%d -> ", temp->data);\n        temp = temp->next;\n    }\n    printf("NULL\\n");\n\n    temp = head;\n    while (temp != NULL) {\n        struct Node *next = temp->next;\n        free(temp);\n        temp = next;\n    }\n\n    return 0;\n}\n`
+    ],
     hello: [
       'Hello World',
       '#include <stdio.h>\n\nint main(void) {\n    printf("Hello, World!\\n");\n    return 0;\n}\n'
@@ -502,14 +506,16 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     INTERACTIVE C DEBUGGER ENGINE
+     INTERACTIVE C POINTER & STRUCT DEBUGGER ENGINE
      ══════════════════════════════════════════════════════════════════════ */
   const Debugger = {
     active: false,
     paused: false,
     currentLine: 1,
     breakpoints: new Set(),
-    variables: new Map(),
+    variables: new Map(), // name -> { name, type, value, heapId }
+    heap: new Map(),      // address '0x2000' -> { data: 10, next: '0x2018' }
+    nextAddr: 0x2000,
     executableLines: [],
     _breakpointDecorations: [],
     _executionDecorations: [],
@@ -557,6 +563,14 @@
           }
         });
       }
+    },
+
+    allocateHeap() {
+      const addr = '0x' + (this.nextAddr).toString(16).toUpperCase();
+      this.nextAddr += 24;
+      const obj = { data: 0, next: 'NULL' };
+      this.heap.set(addr, obj);
+      return addr;
     },
 
     toggleBreakpoint(line) {
@@ -618,11 +632,22 @@
       const file = VFS.read(activePath);
       const lines = file.content.split('\n');
 
-      // Find executable statement lines (ignoring empty lines, comments, includes)
+      // Find executable statement lines (ignoring empty lines, comments, struct definition body)
       this.executableLines = [];
+      let inStructDef = false;
+
       lines.forEach((l, i) => {
         const trimmed = l.trim();
-        if (trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('/*') && !trimmed.startsWith('#')) {
+        if (trimmed.startsWith('struct') && trimmed.includes('{')) {
+          inStructDef = true;
+          return;
+        }
+        if (inStructDef) {
+          if (trimmed.startsWith('};')) inStructDef = false;
+          return;
+        }
+
+        if (trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('/*') && !trimmed.startsWith('#') && trimmed !== '{' && trimmed !== '}') {
           this.executableLines.push(i + 1);
         }
       });
@@ -635,6 +660,8 @@
       this.active = true;
       this.paused = true;
       this.variables.clear();
+      this.heap.clear();
+      this.nextAddr = 0x2000;
 
       // Find first breakpoint or start at first statement line
       const firstBp = Array.from(this.breakpoints).sort((a,b)=>a-b).find(l => this.executableLines.includes(l));
@@ -662,19 +689,16 @@
 
     continue() {
       if (!this.active) return;
-      // Find next line with a breakpoint
       const sortedBps = Array.from(this.breakpoints).sort((a,b)=>a-b);
       const nextBp = sortedBps.find(l => l > this.currentLine);
 
       if (nextBp) {
-        // Step to next breakpoint
         this.currentLine = nextBp;
         this.highlightExecutionLine();
         this.simulateLineExecution(this.currentLine);
         this.renderVariables();
         debugLog(`[Paused] Breakpoint hit at line ${this.currentLine}.`);
       } else {
-        // Finish program execution
         termLog('[Debugger] Executed to end of program.');
         debugLog('[Debugger] Execution completed successfully.');
         this.stop();
@@ -684,9 +708,54 @@
 
     stepOver() {
       if (!this.active) return;
-      const idx = this.executableLines.indexOf(this.currentLine);
-      if (idx !== -1 && idx < this.executableLines.length - 1) {
-        this.currentLine = this.executableLines[idx + 1];
+      const activePath = Tabs.getActive();
+      if (!activePath) return;
+      const file = VFS.read(activePath);
+      const lines = file.content.split('\n');
+
+      const currentLineText = lines[this.currentLine - 1] ? lines[this.currentLine - 1].trim() : '';
+
+      let nextLineIndex = this.executableLines.indexOf(this.currentLine) + 1;
+
+      // Handle while loop conditions e.g. while (temp != NULL)
+      if (currentLineText.includes('while (temp != NULL)') || currentLineText.includes('while (temp)')) {
+        const tempVar = this.variables.get('temp');
+        const isNull = !tempVar || tempVar.value === 'NULL' || tempVar.value === 0 || tempVar.value === '0x0';
+        if (isNull) {
+          // Jump after while loop body
+          let braceCount = 1;
+          let targetLine = this.currentLine + 1;
+          for (let i = this.currentLine; i < lines.length; i++) {
+            if (lines[i].includes('{')) braceCount++;
+            if (lines[i].includes('}')) {
+              braceCount--;
+              if (braceCount <= 0) {
+                targetLine = i + 2;
+                break;
+              }
+            }
+          }
+          const foundIndex = this.executableLines.findIndex(l => l >= targetLine);
+          if (foundIndex !== -1) nextLineIndex = foundIndex;
+        }
+      }
+
+      // Handle loop body repeat: when at temp = temp->next; loop back to while statement
+      if (currentLineText.includes('temp = temp->next') || currentLineText.includes('free(temp)')) {
+        for (let i = this.currentLine - 1; i >= 0; i--) {
+          if (lines[i].includes('while')) {
+            const whileLine = i + 1;
+            const foundIndex = this.executableLines.indexOf(whileLine);
+            if (foundIndex !== -1) {
+              nextLineIndex = foundIndex;
+              break;
+            }
+          }
+        }
+      }
+
+      if (nextLineIndex >= 0 && nextLineIndex < this.executableLines.length) {
+        this.currentLine = this.executableLines[nextLineIndex];
         this.highlightExecutionLine();
         this.simulateLineExecution(this.currentLine);
         this.renderVariables();
@@ -729,30 +798,96 @@
       const lines = file.content.split('\n');
       const lineText = lines[lineNum - 1] ? lines[lineNum - 1].trim() : '';
 
-      // Parse simple int variable declarations: int v = 7; or sum = 0;
-      const varDeclMatch = lineText.match(/(?:int|float|double|char\*?)\s+([a-zA-Z_]\w*)\s*=\s*(.+);/);
-      if (varDeclMatch) {
-        const varName = varDeclMatch[1];
-        const valExpr = varDeclMatch[2];
-        try {
-          // evaluate primitive number / string
-          const evalVal = Function(`"use strict"; return (${valExpr.replace(/(\w+)/g, (m) => this.variables.has(m) ? this.variables.get(m).value : m)});`)();
-          this.variables.set(varName, { type: 'int', value: evalVal });
-        } catch(e) {
-          this.variables.set(varName, { type: 'int', value: valExpr });
+      // 1. Declaration: struct Node *head = NULL;
+      const structDecl = lineText.match(/struct\s+(\w+)\s*\*([a-zA-Z_]\w*)\s*=\s*(.+);/);
+      if (structDecl) {
+        const typeName = 'struct ' + structDecl[1] + '*';
+        const varName = structDecl[2];
+        const initialVal = structDecl[3].trim();
+        this.variables.set(varName, {
+          name: varName,
+          type: typeName,
+          value: initialVal === 'NULL' ? 'NULL' : initialVal,
+          heapId: null
+        });
+      }
+
+      // 2. Malloc: head = (struct Node *)malloc(sizeof(struct Node));
+      const mallocMatch = lineText.match(/([a-zA-Z_]\w*)\s*=\s*.*malloc\(/);
+      if (mallocMatch) {
+        const varName = mallocMatch[1];
+        const addr = this.allocateHeap();
+        const existing = this.variables.get(varName) || { name: varName, type: 'struct Node*' };
+        existing.value = addr;
+        existing.heapId = addr;
+        this.variables.set(varName, existing);
+      }
+
+      // 3. Member assignment: head->data = 10;
+      const memberValMatch = lineText.match(/([a-zA-Z_]\w*)->(data)\s*=\s*(.+);/);
+      if (memberValMatch) {
+        const varName = memberValMatch[1];
+        const field = memberValMatch[2];
+        const valStr = memberValMatch[3].trim();
+        const valNum = parseInt(valStr, 10);
+
+        const v = this.variables.get(varName);
+        if (v && v.heapId && this.heap.has(v.heapId)) {
+          this.heap.get(v.heapId)[field] = isNaN(valNum) ? valStr : valNum;
         }
       }
 
-      // Parse assignment: sum += i; or sum = sum + i;
-      const assignMatch = lineText.match(/([a-zA-Z_]\w*)\s*(\+=|\*=|-=|=)\s*(.+);/);
-      if (assignMatch && !lineText.startsWith('int') && !lineText.startsWith('for')) {
-        const varName = assignMatch[1];
-        const op = assignMatch[2];
-        const expr = assignMatch[3];
-        let curr = this.variables.get(varName)?.value || 0;
-        if (op === '+=') curr += (parseInt(expr, 10) || 1);
-        else if (op === '=') curr = parseInt(expr, 10) || 0;
-        this.variables.set(varName, { type: 'int', value: curr });
+      // 4. Pointer member assignment: head->next = second;
+      const memberPtrMatch = lineText.match(/([a-zA-Z_]\w*)->(next)\s*=\s*(.+);/);
+      if (memberPtrMatch) {
+        const varName = memberPtrMatch[1];
+        const field = memberPtrMatch[2];
+        const targetVarName = memberPtrMatch[3].replace(';', '').trim();
+
+        const v = this.variables.get(varName);
+        const targetV = this.variables.get(targetVarName);
+        const targetVal = targetV ? targetV.value : (targetVarName === 'NULL' ? 'NULL' : targetVarName);
+
+        if (v && v.heapId && this.heap.has(v.heapId)) {
+          this.heap.get(v.heapId)[field] = targetVal;
+        }
+      }
+
+      // 5. Pointer copy: temp = head; or temp = temp->next; or struct Node *next = temp->next;
+      const copyPtrMatch = lineText.match(/(?:struct\s+\w+\s*\*)?\s*([a-zA-Z_]\w*)\s*=\s*([a-zA-Z_]\w*)(?:->(next|data))?;/);
+      if (copyPtrMatch && !lineText.includes('malloc') && !lineText.includes('sizeof')) {
+        const targetVarName = copyPtrMatch[1];
+        const sourceVarName = copyPtrMatch[2];
+        const subField = copyPtrMatch[3];
+
+        if (subField === 'next') {
+          const srcV = this.variables.get(sourceVarName);
+          if (srcV && srcV.heapId && this.heap.has(srcV.heapId)) {
+            const nextAddr = this.heap.get(srcV.heapId).next;
+            this.variables.set(targetVarName, {
+              name: targetVarName,
+              type: 'struct Node*',
+              value: nextAddr,
+              heapId: nextAddr !== 'NULL' ? nextAddr : null
+            });
+          }
+        } else {
+          const srcV = this.variables.get(sourceVarName);
+          if (srcV) {
+            this.variables.set(targetVarName, {
+              name: targetVarName,
+              type: srcV.type || 'struct Node*',
+              value: srcV.value,
+              heapId: srcV.heapId
+            });
+          }
+        }
+      }
+
+      // 6. Primitive integer assignments: int sum = 0; or sum += i;
+      const primMatch = lineText.match(/(?:int)\s+([a-zA-Z_]\w*)\s*=\s*(\d+);/);
+      if (primMatch) {
+        this.variables.set(primMatch[1], { name: primMatch[1], type: 'int', value: parseInt(primMatch[2], 10) });
       }
     },
 
@@ -762,32 +897,59 @@
       container.innerHTML = '';
 
       if (this.variables.size === 0) {
-        container.innerHTML = `<div class="dim font-11 padding-6">No local variables in frame scope.</div>`;
+        container.innerHTML = `<div class="dim font-11 padding-6">No variables in active frame.</div>`;
         return;
       }
 
-      for (const [key, info] of this.variables) {
-        const row = document.createElement('div');
-        row.className = 'debug-var-row';
-        row.innerHTML =
-          `<div><span class="var-name">${esc(key)}</span> <span class="var-type">${esc(info.type)}</span></div>` +
-          `<span class="var-val">${esc(info.value)}</span>`;
-        container.appendChild(row);
+      for (const [key, v] of this.variables) {
+        const item = document.createElement('div');
+        item.className = 'debug-var-item-group';
+
+        let heapDetails = '';
+        if (v.heapId && this.heap.has(v.heapId)) {
+          const h = this.heap.get(v.heapId);
+          heapDetails = `
+            <div class="debug-var-children">
+              <div class="debug-var-row sub"><span class="var-name">->data</span>: <span class="var-val">${esc(h.data)}</span> <span class="var-type">(int)</span></div>
+              <div class="debug-var-row sub"><span class="var-name">->next</span>: <span class="var-val">${esc(h.next)}</span> <span class="var-type">(struct Node*)</span></div>
+            </div>`;
+        }
+
+        item.innerHTML =
+          `<div class="debug-var-row">` +
+            `<div><i class="codicon codicon-symbol-variable"></i> <span class="var-name">${esc(v.name)}</span> <span class="var-type">(${esc(v.type)})</span></div>` +
+            `<span class="var-val">${esc(v.value)}</span>` +
+          `</div>` +
+          heapDetails;
+
+        container.appendChild(item);
       }
     },
 
     evaluateExpression(expr) {
+      if (expr.includes('->')) {
+        const parts = expr.split('->');
+        const root = parts[0].trim();
+        const field = parts[1].trim();
+
+        const v = this.variables.get(root);
+        if (v && v.heapId && this.heap.has(v.heapId)) {
+          const heapObj = this.heap.get(v.heapId);
+          debugLog(`> ${expr} = ${heapObj[field]}`);
+          return;
+        }
+      }
+
       if (this.variables.has(expr)) {
         const v = this.variables.get(expr);
-        debugLog(`> ${expr} = ${v.value} (${v.type})`);
-      } else {
-        try {
-          const evalFn = new Function(...Array.from(this.variables.keys()), `"use strict"; return (${expr});`);
-          const res = evalFn(...Array.from(this.variables.values()).map(v => v.value));
-          debugLog(`> ${expr} = ${res}`);
-        } catch (err) {
-          debugLog(`> ${expr} → Evaluation error: ${err.message}`);
+        let extra = '';
+        if (v.heapId && this.heap.has(v.heapId)) {
+          const h = this.heap.get(v.heapId);
+          extra = ` → Node { data: ${h.data}, next: "${h.next}" }`;
         }
+        debugLog(`> ${expr} = ${v.value} (${v.type})${extra}`);
+      } else {
+        debugLog(`> ${expr} = undefined`);
       }
     }
   };
@@ -1279,7 +1441,7 @@
      INIT & EVENT BINDINGS
      ══════════════════════════════════════════════════════════════════════ */
   window.addEventListener('DOMContentLoaded', () => {
-    VFS.write('main.c', PRESETS.hello[1], { language: 'c' });
+    VFS.write('main.c', PRESETS.linkedlist[1], { language: 'c' });
 
     populatePresets();
     bindEvents();
@@ -1344,7 +1506,6 @@
     $('btn-run').onclick    = () => runPipeline(true);
     $('btn-sidebar-new').onclick   = () => createNewFile();
     $('btn-sidebar-clean').onclick = () => {
-      // Clear non-active files
       const active = Tabs.getActive();
       VFS.list().forEach(p => { if (p !== active) VFS.remove(p); });
     };
