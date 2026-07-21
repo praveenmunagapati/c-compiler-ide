@@ -3,13 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>C Compiler Pipeline Visualizer IDE</title>
-  <meta name="description" content="An interactive educational IDE that visualizes every stage of C compilation: preprocessing, parsing, AST, assembly, WASM binary sections, and live execution.">
+  <title>C Compiler IDE</title>
+  <meta name="description" content="A browser-based C11 IDE with virtual file system, integrated compiler, and WebAssembly execution.">
 
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <!-- Codicon icons (VS Code icon font) -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/base/browser/ui/codicons/codicon/codicon.min.css" crossorigin="anonymous">
 
   <!-- Monaco Editor AMD loader -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.45.0/min/vs/loader.min.js" crossorigin="anonymous"></script>
@@ -23,115 +26,114 @@
 </head>
 <body>
 
-  <!-- ═══════════ NAVBAR ═══════════ -->
-  <header class="navbar">
-    <div class="brand">
-      <div class="brand-icon">C</div>
-      <h1 class="brand-title">C Compiler Pipeline Visualizer <span class="tag">C11 → WASM</span></h1>
+  <!-- ═══════════ TOOLBAR ═══════════ -->
+  <div class="toolbar" id="toolbar">
+    <div class="toolbar-left">
+      <div class="brand">
+        <div class="brand-icon">C</div>
+        <span class="brand-title">C Compiler IDE</span>
+      </div>
+      <div class="toolbar-sep"></div>
+      <select id="preset-select" class="toolbar-select" aria-label="Code preset"></select>
     </div>
-    <div class="nav-controls">
-      <select id="preset-select" class="preset-select" aria-label="Code preset"></select>
-      <button id="btn-reset" class="btn btn-reset" title="Reset pipeline">↻ Reset</button>
-      <button id="btn-step" class="btn" title="Step to next stage">Step ➔</button>
-      <button id="btn-build" class="btn btn-build" title="Build C program (Compile to WASM)">🔨 Build</button>
-      <button id="btn-run" class="btn btn-primary" title="Build and run program in terminal (Ctrl+Enter)">▶ Run Program</button>
-    </div>
-  </header>
-
-  <!-- ═══════════ PIPELINE STEPPER ═══════════ -->
-  <div class="pipeline-banner">
-    <div class="stepper">
-      <div class="step-node active" data-stage="source">
-        <div class="step-num">0</div>
-        <div class="step-info"><div class="step-title">Source</div><div class="step-file">main.c</div></div>
-      </div>
-      <div class="step-arrow">➔</div>
-      <div class="step-node" data-stage="preprocessed">
-        <div class="step-num">1</div>
-        <div class="step-info"><div class="step-title">Preprocess</div><div class="step-file">main.i</div></div>
-      </div>
-      <div class="step-arrow">➔</div>
-      <div class="step-node" data-stage="ast">
-        <div class="step-num">2</div>
-        <div class="step-info"><div class="step-title">Parse / AST</div><div class="step-file">AST</div></div>
-      </div>
-      <div class="step-arrow">➔</div>
-      <div class="step-node" data-stage="wast">
-        <div class="step-num">3</div>
-        <div class="step-info"><div class="step-title">Assembly</div><div class="step-file">main.s</div></div>
-      </div>
-      <div class="step-arrow">➔</div>
-      <div class="step-node" data-stage="wasm">
-        <div class="step-num">4</div>
-        <div class="step-info"><div class="step-title">WASM Binary</div><div class="step-file">main.o</div></div>
-      </div>
-      <div class="step-arrow">➔</div>
-      <div class="step-node" data-stage="output">
-        <div class="step-num">5</div>
-        <div class="step-info"><div class="step-title">Execute</div><div class="step-file">a.out</div></div>
-      </div>
+    <div class="toolbar-right">
+      <button id="btn-new" class="toolbar-btn" title="New file (Ctrl+N)">
+        <i class="codicon codicon-new-file"></i> New File
+      </button>
+      <div class="toolbar-sep"></div>
+      <button id="btn-build" class="toolbar-btn toolbar-btn-build" title="Build (Compile to WASM)">
+        <i class="codicon codicon-tools"></i> Build
+      </button>
+      <button id="btn-run" class="toolbar-btn toolbar-btn-run" title="Build & Run (Ctrl+Enter)">
+        <i class="codicon codicon-play"></i> Run
+      </button>
     </div>
   </div>
 
   <!-- ═══════════ MAIN LAYOUT ═══════════ -->
-  <div class="main-container">
+  <div class="ide-container">
 
-    <!-- LEFT: Monaco Editor -->
-    <div class="left-pane">
-      <div class="pane-header">
-        <div class="pane-label"><span>Source Code</span><span class="badge">main.c</span></div>
+    <!-- SIDEBAR: File Explorer -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">EXPLORER</span>
       </div>
-      <div class="editor-wrapper">
+      <div class="sidebar-section">
+        <div class="sidebar-section-header" id="sidebar-project-header">
+          <i class="codicon codicon-chevron-down"></i>
+          <span>PROJECT</span>
+        </div>
+        <div class="file-tree" id="file-tree">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+
+    <!-- SIDEBAR RESIZE HANDLE -->
+    <div class="sidebar-resize" id="sidebar-resize"></div>
+
+    <!-- WORKBENCH: Editor + Terminal -->
+    <div class="workbench">
+
+      <!-- TAB BAR -->
+      <div class="tab-bar" id="tab-bar">
+        <!-- Populated by JS -->
+      </div>
+
+      <!-- EDITOR -->
+      <div class="editor-area" id="editor-area">
         <div id="monaco-editor"></div>
-      </div>
-    </div>
-
-    <!-- RIGHT: Inspector Tabs -->
-    <div class="right-pane">
-      <div class="tab-bar">
-        <div class="tab-item active" data-stage="preprocessed">1. Preprocessed</div>
-        <div class="tab-item" data-stage="ast">2. AST</div>
-        <div class="tab-item" data-stage="wast">3. Assembly</div>
-        <div class="tab-item" data-stage="wasm">4. Sections</div>
-        <div class="tab-item" data-stage="output">5. Terminal</div>
-      </div>
-
-      <!-- Panels -->
-      <div id="panel-preprocessed" class="tab-panel active">
-        <div id="code-pp" class="code-viewer">// Preprocessed output appears here after running the pipeline.</div>
-      </div>
-      <div id="panel-ast" class="tab-panel">
-        <div id="tree-ast" class="tree-viewer">// AST tree appears here after running the pipeline.</div>
-      </div>
-      <div id="panel-wast" class="tab-panel">
-        <div id="code-wast" class="code-viewer">;; WAST / assembly instructions appear here after running the pipeline.</div>
-      </div>
-      <div id="panel-wasm" class="tab-panel">
-        <div id="section-grid" class="section-grid">
-          <div class="section-card"><div class="section-card-title">Run the pipeline to inspect WASM sections.</div></div>
+        <!-- Welcome screen when no tabs are open -->
+        <div class="welcome-screen" id="welcome-screen">
+          <div class="welcome-icon">C</div>
+          <h2>C Compiler IDE</h2>
+          <p>Open a file from the explorer, or create a new one.</p>
+          <div class="welcome-shortcuts">
+            <div><kbd>Ctrl</kbd>+<kbd>Enter</kbd> Build &amp; Run</div>
+            <div><kbd>Ctrl</kbd>+<kbd>N</kbd> New File</div>
+          </div>
         </div>
       </div>
-      <div id="panel-output" class="tab-panel">
-        <div id="terminal" class="terminal-view">
-          <div class="line line-sys">[Ready] Press ▶ Run Pipeline or Ctrl+Enter.</div>
+
+      <!-- TERMINAL RESIZE HANDLE -->
+      <div class="terminal-resize" id="terminal-resize"></div>
+
+      <!-- TERMINAL PANEL -->
+      <div class="terminal-panel" id="terminal-panel">
+        <div class="terminal-header">
+          <div class="terminal-tabs">
+            <span class="terminal-tab active">
+              <i class="codicon codicon-terminal"></i> Terminal
+            </span>
+          </div>
+          <div class="terminal-actions">
+            <button class="terminal-action-btn" id="btn-clear-term" title="Clear Terminal">
+              <i class="codicon codicon-clear-all"></i>
+            </button>
+            <button class="terminal-action-btn" id="btn-toggle-term" title="Toggle Terminal">
+              <i class="codicon codicon-chevron-down"></i>
+            </button>
+          </div>
+        </div>
+        <div class="terminal-body" id="terminal">
+          <div class="term-line term-sys">C Compiler IDE — Ready. Press ▶ Run or Ctrl+Enter.</div>
         </div>
       </div>
-    </div>
-  </div>
-
-  <!-- ═══════════ INSIGHT PANEL ═══════════ -->
-  <div class="insight-panel">
-    <div class="insight-icon">💡</div>
-    <div class="insight-body">
-      <div id="insight-title" class="insight-title">Stage 0 — C Source Code  (main.c)</div>
-      <div id="insight-text" class="insight-text">Human-readable C source: includes, macros, comments, and type-safe syntax. This is the code you write and edit.</div>
     </div>
   </div>
 
   <!-- ═══════════ STATUS BAR ═══════════ -->
-  <div class="status-bar">
-    <div><span class="dot"></span>C Compiler Pipeline Visualizer IDE</div>
-    <div>compiler.js + stdlib.js | C11 → WebAssembly</div>
+  <div class="status-bar" id="status-bar">
+    <div class="status-left">
+      <span class="status-item" id="status-build">
+        <i class="codicon codicon-check"></i> Ready
+      </span>
+    </div>
+    <div class="status-right">
+      <span class="status-item" id="status-file">main.c</span>
+      <span class="status-item" id="status-lang">C</span>
+      <span class="status-item" id="status-cursor">Ln 1, Col 1</span>
+    </div>
   </div>
 
   <!-- App Logic (after DOM) -->
