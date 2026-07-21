@@ -345,6 +345,38 @@ body {
   color: #c9d1d9;
 }
 
+/* ── Syntax Highlighting Tokens ─────────────────────────────────────── */
+
+/* C / Preprocessed tokens */
+.hl-keyword   { color: #ff7b72; font-weight: 600; }        /* red-orange: int, void, return, if, for */
+.hl-type      { color: #79c0ff; }                           /* blue: types, struct, enum, typedef */
+.hl-string    { color: #a5d6ff; }                           /* light blue: "..." */
+.hl-number    { color: #ffa657; }                           /* orange: 0, 42, 3.14 */
+.hl-comment   { color: #8b949e; font-style: italic; }      /* grey italic: // and /* */
+.hl-preproc   { color: #d2a8ff; }                           /* purple: #include, #define, # line */
+.hl-include   { color: #a5d6ff; }                           /* light blue: <stdio.h> */
+.hl-func      { color: #d2a8ff; }                           /* purple: function calls */
+.hl-punct     { color: #8b949e; }                           /* grey: () {} ; , */
+.hl-ident     { color: #c9d1d9; }                           /* default text */
+
+/* AST tree tokens */
+.hl-ast-icon     { color: #ffa657; }                        /* 📦 icon */
+.hl-ast-branch   { color: #3d5a80; }                        /* │ ├ └ ─ */
+.hl-ast-node     { color: #ff7b72; font-weight: 600; }     /* TranslationUnit, FunctionDecl */
+.hl-ast-name     { color: #79c0ff; }                        /* identifiers: main, printf */
+.hl-ast-type     { color: #7ee787; }                        /* int, *char, *const char */
+.hl-ast-literal  { color: #ffa657; }                        /* string/int/float values */
+.hl-ast-meta     { color: #8b949e; font-style: italic; }   /* (import), parameters, etc. */
+.hl-ast-header   { color: #d2a8ff; font-style: italic; }   /* [Header Prototypes] */
+
+/* WAST / Assembly tokens */
+.hl-wasm-kw      { color: #ff7b72; font-weight: 600; }     /* module, memory, export, func */
+.hl-wasm-section { color: #79c0ff; font-weight: 600; }     /* Section N: Name */
+.hl-wasm-comment { color: #8b949e; font-style: italic; }   /* ;; comments */
+.hl-wasm-number  { color: #ffa657; }                        /* byte counts, offsets */
+.hl-wasm-string  { color: #a5d6ff; }                        /* "memory", "a.wasm" */
+.hl-wasm-paren   { color: #8b949e; }                        /* ( ) */
+
 /* WASM section grid */
 .section-grid {
   flex: 1;

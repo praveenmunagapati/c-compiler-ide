@@ -247,19 +247,19 @@
     try {
       /* ── 1. Lex & Preprocess ─────────────────────────────────────── */
       const ppText = extractPreprocessed(CJS, source, allErrors);
-      $('code-pp').textContent = ppText;
+      $('code-pp').innerHTML = highlightC(ppText);
       highestStage = 1;
       term.innerHTML += '<div class="line line-sys">[Stage 1] Preprocessing complete.</div>';
 
       /* ── 2. Parse → AST ──────────────────────────────────────────── */
       const astText = extractAST(CJS, source, allErrors);
-      $('tree-ast').textContent = astText;
+      $('tree-ast').innerHTML = highlightAST(astText);
       highestStage = 2;
       term.innerHTML += '<div class="line line-sys">[Stage 2] Parsing complete — AST generated.</div>';
 
       /* ── 3 & 4. Codegen → WASM bytes ─────────────────────────────── */
       const wasmInfo = extractWasm(CJS, source, allErrors, allWarnings);
-      $('code-wast').textContent = wasmInfo.wastText;
+      $('code-wast').innerHTML = highlightWAST(wasmInfo.wastText);
       highestStage = 3;
       term.innerHTML += '<div class="line line-sys">[Stage 3] Code generation complete.</div>';
 
@@ -821,10 +821,301 @@
       });
   }
 
+  /* ══════════════════════════════════════════════════════════════════════
+     SYNTAX HIGHLIGHTING
+     ══════════════════════════════════════════════════════════════════════ */
+
+  /* ── C / Preprocessed Highlighting ─────────────────────────────────── */
+  function highlightC(code) {
+    if (!code) return '';
+    const C_KEYWORDS = new Set([
+      'auto','break','case','char','const','continue','default','do','double',
+      'else','enum','extern','float','for','goto','if','inline','int','long',
+      'register','restrict','return','short','signed','sizeof','static',
+      'struct','switch','typedef','union','unsigned','void','volatile','while',
+      '_Bool','_Complex','_Imaginary','_Alignas','_Alignof','_Atomic',
+      '_Generic','_Noreturn','_Static_assert','_Thread_local',
+    ]);
+    const C_TYPES = new Set([
+      'size_t','ptrdiff_t','FILE','va_list','int8_t','int16_t','int32_t',
+      'int64_t','uint8_t','uint16_t','uint32_t','uint64_t','intptr_t',
+      'uintptr_t','ssize_t','off_t','wchar_t','bool','NULL',
+    ]);
+
+    const lines = code.split('\n');
+    const result = [];
+
+    for (const line of lines) {
+      // Preprocessor directive lines: # N "filename"
+      if (/^\s*#/.test(line)) {
+        result.push(span('hl-preproc', esc(line)));
+        continue;
+      }
+
+      // Line-level comment
+      if (/^\s*\/\//.test(line)) {
+        result.push(span('hl-comment', esc(line)));
+        continue;
+      }
+
+      // Tokenize the line
+      let out = '';
+      let i = 0;
+      while (i < line.length) {
+        // Block comment start
+        if (line[i] === '/' && line[i+1] === '*') {
+          let end = line.indexOf('*/', i + 2);
+          if (end === -1) end = line.length - 2;
+          out += span('hl-comment', esc(line.substring(i, end + 2)));
+          i = end + 2;
+          continue;
+        }
+        // Line comment
+        if (line[i] === '/' && line[i+1] === '/') {
+          out += span('hl-comment', esc(line.substring(i)));
+          break;
+        }
+        // Strings
+        if (line[i] === '"') {
+          let j = i + 1;
+          while (j < line.length && line[j] !== '"') { if (line[j] === '\\') j++; j++; }
+          out += span('hl-string', esc(line.substring(i, j + 1)));
+          i = j + 1;
+          continue;
+        }
+        // Char literals
+        if (line[i] === "'") {
+          let j = i + 1;
+          while (j < line.length && line[j] !== "'") { if (line[j] === '\\') j++; j++; }
+          out += span('hl-string', esc(line.substring(i, j + 1)));
+          i = j + 1;
+          continue;
+        }
+        // Numbers
+        if (/[0-9]/.test(line[i]) && (i === 0 || !/[a-zA-Z_]/.test(line[i-1]))) {
+          let j = i;
+          while (j < line.length && /[0-9a-fA-FxXuUlL.]/.test(line[j])) j++;
+          out += span('hl-number', esc(line.substring(i, j)));
+          i = j;
+          continue;
+        }
+        // Identifiers / keywords
+        if (/[a-zA-Z_]/.test(line[i])) {
+          let j = i;
+          while (j < line.length && /[a-zA-Z0-9_]/.test(line[j])) j++;
+          const word = line.substring(i, j);
+          if (C_KEYWORDS.has(word)) {
+            out += span('hl-keyword', esc(word));
+          } else if (C_TYPES.has(word)) {
+            out += span('hl-type', esc(word));
+          } else {
+            // Check if it's followed by ( → function call
+            let k = j;
+            while (k < line.length && line[k] === ' ') k++;
+            if (line[k] === '(') {
+              out += span('hl-func', esc(word));
+            } else {
+              out += esc(word);
+            }
+          }
+          i = j;
+          continue;
+        }
+        // Punctuation
+        if ('(){}[];,'.includes(line[i])) {
+          out += span('hl-punct', esc(line[i]));
+          i++;
+          continue;
+        }
+        // Default
+        out += esc(line[i]);
+        i++;
+      }
+      result.push(out);
+    }
+    return result.join('\n');
+  }
+
+  /* ── AST Tree Highlighting ─────────────────────────────────────────── */
+  function highlightAST(text) {
+    if (!text) return '';
+    const lines = text.split('\n');
+    const result = [];
+
+    for (const line of lines) {
+      // Split into branch characters and content
+      const branchMatch = line.match(/^([│├└─\s]*)(.*)/u);
+      let branch = '';
+      let content = line;
+
+      if (branchMatch) {
+        branch = branchMatch[1];
+        content = branchMatch[2];
+      }
+
+      let out = '';
+      if (branch) {
+        out += span('hl-ast-branch', esc(branch));
+      }
+
+      // Root node with icon
+      if (content.startsWith('📦 ')) {
+        out += span('hl-ast-icon', '📦 ');
+        out += span('hl-ast-node', esc(content.substring(3)));
+      }
+      // Header prototypes summary
+      else if (content.startsWith('[Header Prototypes]')) {
+        out += span('hl-ast-header', esc(content));
+      }
+      // AST node types
+      else {
+        out += highlightASTContent(content);
+      }
+
+      result.push(out);
+    }
+    return result.join('\n');
+  }
+
+  function highlightASTContent(content) {
+    const s = esc(content);
+
+    // Node type keywords at the start
+    const nodeTypes = [
+      'TranslationUnit', 'FunctionDecl', 'VarDecl', 'CompoundStmt',
+      'ExprStmt', 'ReturnStmt', 'IfStmt', 'ForStmt', 'WhileStmt',
+      'DoStmt', 'SwitchStmt', 'CaseStmt', 'DefaultStmt', 'BreakStmt',
+      'ContinueStmt', 'CallExpr', 'Identifier', 'StringLiteral',
+      'IntLiteral', 'FloatLiteral', 'ImplicitCast', 'ArrayDecay',
+      'Parameters', 'Expr',
+    ];
+
+    for (const nt of nodeTypes) {
+      if (s.startsWith(nt)) {
+        const rest = s.substring(nt.length);
+        return span('hl-ast-node', nt) + highlightASTRest(rest);
+      }
+    }
+    return s;
+  }
+
+  function highlightASTRest(rest) {
+    // Highlight type signatures like int, *char, *const char, etc.
+    let out = rest;
+    // Quoted names: "printf", "main"
+    out = out.replace(/&quot;([^&]*?)&quot;/g, (m, name) =>
+      span('hl-ast-name', '&quot;' + name + '&quot;'));
+    // Parenthesized meta info
+    out = out.replace(/\(([^)]*return:[^)]*)\)/g, (m, inner) => {
+      // Highlight type within (N args, return: TYPE)
+      return span('hl-ast-meta', '(' + inner + ')');
+    });
+    out = out.replace(/\((\d+)\)/g, (m, num) =>
+      span('hl-ast-meta', '(' + num + ')'));
+    // Arrow types: -> TYPE
+    out = out.replace(/-&gt;\s*([^\s<]+)/g, (m, t) =>
+      '-&gt; ' + span('hl-ast-type', t));
+    // len=N
+    out = out.replace(/(len=\d+)/g, span('hl-ast-literal', '$1'));
+    // Standalone numbers
+    out = out.replace(/(\s)(\d+)(\s|$)/g, '$1' + span('hl-ast-literal', '$2') + '$3');
+    // Type annotations in brackets [TYPE]
+    out = out.replace(/\[([^\]]+)\]/g, (m, t) =>
+      '[' + span('hl-ast-type', t) + ']');
+    // {N statements}
+    out = out.replace(/\{([^}]+)\}/g, (m, inner) =>
+      '{' + span('hl-ast-meta', inner) + '}');
+    return out;
+  }
+
+  /* ── WAST / Assembly Highlighting ──────────────────────────────────── */
+  function highlightWAST(text) {
+    if (!text) return '';
+    const lines = text.split('\n');
+    const result = [];
+
+    for (const line of lines) {
+      const trimmed = line.trimStart();
+
+      // Comment lines: ;; ...
+      if (trimmed.startsWith(';;')) {
+        result.push(span('hl-wasm-comment', esc(line)));
+        continue;
+      }
+
+      let out = '';
+      let i = 0;
+      const raw = line;
+      while (i < raw.length) {
+        // Inline comment: ;; after code
+        if (raw[i] === ';' && raw[i+1] === ';') {
+          out += span('hl-wasm-comment', esc(raw.substring(i)));
+          break;
+        }
+        // Strings
+        if (raw[i] === '"') {
+          let j = i + 1;
+          while (j < raw.length && raw[j] !== '"') { if (raw[j] === '\\') j++; j++; }
+          out += span('hl-wasm-string', esc(raw.substring(i, j + 1)));
+          i = j + 1;
+          continue;
+        }
+        // Parentheses
+        if (raw[i] === '(' || raw[i] === ')') {
+          out += span('hl-wasm-paren', esc(raw[i]));
+          i++;
+          continue;
+        }
+        // Numbers (including hex)
+        if (/[0-9]/.test(raw[i]) && (i === 0 || /[\s(,:]/.test(raw[i-1]))) {
+          let j = i;
+          while (j < raw.length && /[0-9a-fA-FxX]/.test(raw[j])) j++;
+          out += span('hl-wasm-number', esc(raw.substring(i, j)));
+          i = j;
+          continue;
+        }
+        // Keywords
+        if (/[a-zA-Z_]/.test(raw[i])) {
+          let j = i;
+          while (j < raw.length && /[a-zA-Z0-9_.$]/.test(raw[j])) j++;
+          const word = raw.substring(i, j);
+          const wasmKw = new Set([
+            'module','memory','export','import','func','param','result',
+            'local','global','table','elem','data','type','call','block',
+            'loop','br','br_if','br_table','return','if','then','else','end',
+            'i32','i64','f32','f64','get','set','load','store','const',
+            'add','sub','mul','div','rem','and','or','xor','shl','shr',
+            'eq','ne','lt','gt','le','ge','eqz','drop','select','unreachable','nop',
+          ]);
+          const isSection = /^Section$/i.test(word);
+          if (wasmKw.has(word) || word.startsWith('i32.') || word.startsWith('i64.') ||
+              word.startsWith('f32.') || word.startsWith('f64.') ||
+              word.startsWith('local.') || word.startsWith('global.') ||
+              word.startsWith('memory.')) {
+            out += span('hl-wasm-kw', esc(word));
+          } else if (isSection) {
+            out += span('hl-wasm-section', esc(word));
+          } else {
+            out += esc(word);
+          }
+          i = j;
+          continue;
+        }
+        out += esc(raw[i]);
+        i++;
+      }
+      result.push(out);
+    }
+    return result.join('\n');
+  }
+
   /* ── Helpers ────────────────────────────────────────────────────────── */
   function $(id) { return document.getElementById(id); }
   function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function span(cls, content) {
+    return '<span class="' + cls + '">' + content + '</span>';
   }
 
 })();
