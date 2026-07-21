@@ -30,8 +30,12 @@
 <body>
 
   <!-- ═══════════ TOOLBAR ═══════════ -->
-  <div class="toolbar" id="toolbar">
+  <header class="toolbar" id="toolbar">
     <div class="toolbar-left">
+      <button id="btn-toggle-sidebar" class="icon-btn sidebar-toggle-btn" title="Toggle Sidebar (Ctrl+B)">
+        <i class="codicon codicon-sidebar-left"></i>
+      </button>
+
       <div class="brand">
         <div class="brand-icon">
           <i class="codicon codicon-code"></i>
@@ -39,31 +43,43 @@
         <span class="brand-title">C Compiler IDE</span>
         <span class="brand-badge">C11 WASM</span>
       </div>
-      <div class="toolbar-sep"></div>
+
+      <div class="toolbar-sep hide-mobile"></div>
+
       <div class="preset-wrapper">
         <i class="codicon codicon-library"></i>
         <select id="preset-select" class="toolbar-select" aria-label="Code preset"></select>
       </div>
     </div>
+
     <div class="toolbar-right">
-      <button id="btn-new" class="toolbar-btn" title="New file (Ctrl+N)">
-        <i class="codicon codicon-new-file"></i> New File
+      <button id="btn-new" class="toolbar-btn toolbar-btn-new" title="New File (Ctrl+N)">
+        <i class="codicon codicon-new-file"></i>
+        <span class="btn-text">New File</span>
       </button>
-      <div class="toolbar-sep"></div>
-      <button id="btn-build" class="toolbar-btn toolbar-btn-build" title="Build (Compile to WASM)">
-        <i class="codicon codicon-tools"></i> Build
+
+      <div class="toolbar-sep hide-mobile"></div>
+
+      <button id="btn-build" class="toolbar-btn toolbar-btn-build" title="Build AST & WASM">
+        <i class="codicon codicon-tools"></i>
+        <span class="btn-text">Build</span>
       </button>
+
       <button id="btn-run" class="toolbar-btn toolbar-btn-run" title="Build & Run (Ctrl+Enter)">
-        <i class="codicon codicon-play"></i> Run
+        <i class="codicon codicon-play"></i>
+        <span class="btn-text">Run</span>
       </button>
     </div>
-  </div>
+  </header>
 
   <!-- ═══════════ MAIN LAYOUT ═══════════ -->
   <div class="ide-container">
 
+    <!-- Mobile Sidebar Backdrop Overlay -->
+    <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
+
     <!-- SIDEBAR: File Explorer -->
-    <div class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <span class="sidebar-title">EXPLORER</span>
         <div class="sidebar-actions">
@@ -84,13 +100,13 @@
           <!-- Populated by JS -->
         </div>
       </div>
-    </div>
+    </aside>
 
     <!-- SIDEBAR RESIZE HANDLE -->
     <div class="sidebar-resize" id="sidebar-resize"></div>
 
     <!-- WORKBENCH: Editor + Terminal -->
-    <div class="workbench">
+    <main class="workbench">
 
       <!-- TAB BAR -->
       <div class="tab-bar-container">
@@ -117,13 +133,14 @@
                 <i class="codicon codicon-new-file"></i> Create New File
               </button>
               <button class="welcome-btn welcome-btn-secondary" id="btn-welcome-preset">
-                <i class="codicon codicon-sparkle"></i> Load Preset Code
+                <i class="codicon codicon-sparkle"></i> Open Presets
               </button>
             </div>
 
             <div class="welcome-shortcuts">
               <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> <span>Build &amp; Run Active File</span></div>
               <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>N</kbd> <span>Create New File</span></div>
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>B</kbd> <span>Toggle Sidebar</span></div>
             </div>
           </div>
         </div>
@@ -133,7 +150,7 @@
       <div class="terminal-resize" id="terminal-resize"></div>
 
       <!-- TERMINAL PANEL -->
-      <div class="terminal-panel" id="terminal-panel">
+      <section class="terminal-panel" id="terminal-panel">
         <div class="terminal-header">
           <div class="terminal-tabs">
             <span class="terminal-tab active">
@@ -142,7 +159,7 @@
           </div>
           <div class="terminal-actions">
             <button class="terminal-action-btn" id="btn-clear-term" title="Clear Terminal">
-              <i class="codicon codicon-clear-all"></i> Clear
+              <i class="codicon codicon-clear-all"></i> <span class="btn-text">Clear</span>
             </button>
             <button class="terminal-action-btn" id="btn-toggle-term" title="Toggle Panel">
               <i class="codicon codicon-chevron-down"></i>
@@ -152,12 +169,12 @@
         <div class="terminal-body" id="terminal">
           <div class="term-line term-sys">C Compiler IDE — Ready. Press ▶ Run or Ctrl+Enter.</div>
         </div>
-      </div>
-    </div>
+      </section>
+    </main>
   </div>
 
   <!-- ═══════════ STATUS BAR ═══════════ -->
-  <div class="status-bar" id="status-bar">
+  <footer class="status-bar" id="status-bar">
     <div class="status-left">
       <span class="status-item status-badge-ok" id="status-build">
         <i class="codicon codicon-check"></i> Ready
@@ -165,10 +182,10 @@
     </div>
     <div class="status-right">
       <span class="status-item" id="status-file"><i class="codicon codicon-file"></i> main.c</span>
-      <span class="status-item" id="status-lang"><i class="codicon codicon-code"></i> C</span>
+      <span class="status-item hide-mobile" id="status-lang"><i class="codicon codicon-code"></i> C</span>
       <span class="status-item" id="status-cursor">Ln 1, Col 1</span>
     </div>
-  </div>
+  </footer>
 
   <!-- ═══════════ CONTEXT MENU ═══════════ -->
   <div id="context-menu" class="context-menu hidden">

@@ -3,10 +3,10 @@
  *
  * Features:
  *   - Virtual File System (VFS) with create, edit, rename, delete
- *   - Multi-tab Monaco Editor with custom dark theme
- *   - File Explorer with hover actions & right-click context menu
+ *   - Responsive Monaco Editor with ResizeObserver layout tracking
+ *   - Mobile-responsive sidebar drawer & keyboard shortcuts
  *   - C11 WebAssembly Compiler Pipeline (Preprocess, AST, WAT, WASM Execution)
- *   - Interactive Modal Prompts
+ *   - Interactive Modal Prompts & Context Menus
  */
 (function () {
   "use strict";
@@ -106,7 +106,6 @@
   const VFS = {
     _files: new Map(),
 
-    /** Create or overwrite a file. */
     write(path, content, opts = {}) {
       this._files.set(path, {
         content: content,
@@ -117,17 +116,14 @@
       FileExplorer.render();
     },
 
-    /** Read a file. Returns null if not found. */
     read(path) {
       return this._files.get(path) || null;
     },
 
-    /** Check if file exists. */
     exists(path) {
       return this._files.has(path);
     },
 
-    /** Delete a file. */
     remove(path) {
       if (!this._files.has(path)) return;
       this._files.delete(path);
@@ -135,7 +131,6 @@
       FileExplorer.render();
     },
 
-    /** Rename a file. */
     rename(oldPath, newPath) {
       if (!oldPath || !newPath || oldPath === newPath) return;
       if (!this._files.has(oldPath)) return;
@@ -148,7 +143,6 @@
       FileExplorer.render();
     },
 
-    /** List all file paths. */
     list() {
       return Array.from(this._files.keys()).sort((a, b) => {
         const aGen = this._files.get(a).generated ? 1 : 0;
@@ -158,7 +152,6 @@
       });
     },
 
-    /** Clear all generated files. */
     clearGenerated() {
       for (const [path, file] of this._files) {
         if (file.generated) {
@@ -189,11 +182,10 @@
      TAB MANAGER
      ══════════════════════════════════════════════════════════════════════ */
   const Tabs = {
-    _open: [],      // ordered list of open file paths
-    _active: null,  // currently active path
-    _models: {},    // path → Monaco ITextModel
+    _open: [],
+    _active: null,
+    _models: {},
 
-    /** Open a file (add tab if not open, switch to it). */
     open(path) {
       if (!VFS.exists(path)) return;
       if (!this._open.includes(path)) {
@@ -203,9 +195,10 @@
       this._ensureModel(path);
       this._render();
       this._showEditor(path);
+      // Close mobile drawer if open
+      closeMobileSidebar();
     },
 
-    /** Close a tab. */
     close(path) {
       const idx = this._open.indexOf(path);
       if (idx === -1) return;
@@ -226,7 +219,6 @@
       this._render();
     },
 
-    /** Rename an open tab. */
     rename(oldPath, newPath) {
       const idx = this._open.indexOf(oldPath);
       if (idx !== -1) {
@@ -245,16 +237,13 @@
       }
     },
 
-    /** Close all generated-file tabs. */
     closeGenerated() {
       const gen = this._open.filter(p => VFS.read(p)?.generated);
       for (const p of gen) this.close(p);
     },
 
-    /** Get active file path. */
     getActive() { return this._active; },
 
-    /** Ensure a Monaco model exists for a file. */
     _ensureModel(path) {
       if (!window.monaco) return;
       const file = VFS.read(path);
@@ -273,7 +262,6 @@
       this._models[path] = model;
     },
 
-    /** Update model content for a path (e.g., after rebuild). */
     updateModel(path) {
       const file = VFS.read(path);
       if (!file) return;
@@ -282,7 +270,6 @@
       }
     },
 
-    /** Show the editor for a path. */
     _showEditor(path) {
       if (!editor) return;
       this._ensureModel(path);
@@ -294,9 +281,9 @@
       $('welcome-screen').classList.add('hidden');
       updateStatusBar();
       FileExplorer.render();
+      setTimeout(() => { editor.layout(); }, 10);
     },
 
-    /** Hide the editor (no tabs open). */
     _hideEditor() {
       $('monaco-editor').classList.remove('visible');
       $('welcome-screen').classList.remove('hidden');
@@ -304,7 +291,6 @@
       FileExplorer.render();
     },
 
-    /** Render the tab bar DOM. */
     _render() {
       const bar = $('tab-bar');
       bar.innerHTML = '';
@@ -370,19 +356,16 @@
           badge +
           actionButtons;
 
-        // Click item -> open
         item.addEventListener('click', (e) => {
           if (e.target.closest('.file-actions')) return;
           Tabs.open(path);
         });
 
-        // Right-click context menu
         item.addEventListener('contextmenu', (e) => {
           e.preventDefault();
           ContextMenu.show(e.clientX, e.clientY, path);
         });
 
-        // Hover action buttons
         const renameBtn = item.querySelector('.btn-rename-file');
         if (renameBtn) {
           renameBtn.addEventListener('click', (e) => {
@@ -456,7 +439,37 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     MONACO EDITOR SETUP
+     SIDEBAR TOGGLE & MOBILE DRAWER LOGIC
+     ══════════════════════════════════════════════════════════════════════ */
+  function toggleSidebar() {
+    const sb = $('sidebar');
+    const isMobile = window.innerWidth <= 768;
+
+    if (isMobile) {
+      sb.classList.toggle('mobile-open');
+      const backdrop = $('sidebar-backdrop');
+      if (backdrop) {
+        if (sb.classList.contains('mobile-open')) {
+          backdrop.classList.add('active');
+        } else {
+          backdrop.classList.remove('active');
+        }
+      }
+    } else {
+      sb.classList.toggle('collapsed');
+    }
+    setTimeout(() => { if (editor) editor.layout(); }, 200);
+  }
+
+  function closeMobileSidebar() {
+    const sb = $('sidebar');
+    const backdrop = $('sidebar-backdrop');
+    if (sb) sb.classList.remove('mobile-open');
+    if (backdrop) backdrop.classList.remove('active');
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     MONACO EDITOR BOOT & RESIZE OBSERVER
      ══════════════════════════════════════════════════════════════════════ */
   let editor = null;
 
@@ -524,6 +537,14 @@
         run: () => runPipeline(true),
       });
 
+      // ResizeObserver to ensure Monaco always fills container
+      if (window.ResizeObserver) {
+        const ro = new ResizeObserver(() => {
+          if (editor) editor.layout();
+        });
+        ro.observe($('editor-area'));
+      }
+
       // Open initial default file
       Tabs.open('main.c');
     });
@@ -533,7 +554,6 @@
      INIT & EVENT BINDINGS
      ══════════════════════════════════════════════════════════════════════ */
   window.addEventListener('DOMContentLoaded', () => {
-    // Populate VFS with default hello.c program
     VFS.write('main.c', PRESETS.hello[1], { language: 'c' });
 
     populatePresets();
@@ -563,6 +583,10 @@
       }
     };
 
+    $('btn-toggle-sidebar').onclick = () => toggleSidebar();
+    const backdrop = $('sidebar-backdrop');
+    if (backdrop) backdrop.onclick = () => closeMobileSidebar();
+
     $('btn-build').onclick  = () => runPipeline(false);
     $('btn-run').onclick    = () => runPipeline(true);
     $('btn-new').onclick    = () => createNewFile();
@@ -579,6 +603,7 @@
     $('btn-clear-term').onclick = () => { $('terminal').innerHTML = ''; };
     $('btn-toggle-term').onclick = () => {
       $('terminal-panel').classList.toggle('collapsed');
+      setTimeout(() => { if (editor) editor.layout(); }, 150);
     };
 
     // Context Menu Item Listeners
@@ -595,7 +620,6 @@
       ContextMenu.hide();
     };
 
-    // Close Context Menu on click outside
     document.addEventListener('click', (e) => {
       if (!e.target.closest('#context-menu')) {
         ContextMenu.hide();
@@ -612,6 +636,14 @@
         e.preventDefault();
         createNewFile();
       }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      if (editor) editor.layout();
     });
 
     // Sidebar resize
@@ -630,11 +662,13 @@
       } else {
         el.style.height = Math.max(80, startSize - (e.clientY - startPos)) + 'px';
       }
+      if (editor) editor.layout();
     };
     const onMouseUp = () => {
       handle.classList.remove('active');
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      if (editor) editor.layout();
     };
     handle.addEventListener('mousedown', (e) => {
       e.preventDefault();
@@ -671,7 +705,6 @@
       return;
     }
 
-    // Determine active C entry file
     let entryPath = Tabs.getActive();
     if (!entryPath || !entryPath.endsWith('.c') || !VFS.exists(entryPath)) {
       if (VFS.exists('main.c')) {
@@ -696,7 +729,6 @@
     const source = entryFile.content;
     const baseName = entryPath.includes('.') ? entryPath.substring(0, entryPath.lastIndexOf('.')) : entryPath;
 
-    // Ensure terminal is open
     $('terminal-panel').classList.remove('collapsed');
 
     const term = $('terminal');
@@ -734,24 +766,20 @@
 
       termLog(`[3/4] WASM Codegen → ${watFile} (${wasmInfo.bytes.length} bytes)`);
 
-      // Show compile warnings
       for (const w of warnings) {
         termLog(`[Warning] ${w}`, 'warn');
       }
 
-      // Update models for generated tabs
       for (const p of [ppFile, astFile, watFile, 'a.wasm.txt']) {
         Tabs.updateModel(p);
       }
 
       FileExplorer.render();
 
-      // Open generated files as tabs for visualizer
       Tabs.open(ppFile);
       Tabs.open(astFile);
       Tabs.open(watFile);
 
-      // Return active focus to entry C source file
       Tabs.open(entryPath);
 
       setBuildStatus('success', `Build OK (${wasmInfo.bytes.length} B)`);
@@ -797,7 +825,6 @@
      PIPELINE STAGE EXTRACTORS
      ══════════════════════════════════════════════════════════════════════ */
 
-  /* ── Stage 1: Preprocessor ─────────────────────────────────────────── */
   function extractPreprocessed(CJS, filename, source, errors) {
     const pp = CJS.createDefaultPPRegistry();
     const result = CJS.tokenize(CJS.intern(filename), source, pp);
@@ -840,7 +867,6 @@
     return out || '// Preprocessor produced no output.';
   }
 
-  /* ── Stage 2: AST ──────────────────────────────────────────────────── */
   function extractAST(CJS, filename, source, errors) {
     const pp = CJS.createDefaultPPRegistry();
     const result = CJS.parseSource(CJS.intern(filename), source, pp);
@@ -855,7 +881,6 @@
     return formatAST(rawAst);
   }
 
-  /* ── AST Tree Formatting ───────────────────────────────────────────── */
   function formatAST(rawAstText) {
     if (!rawAstText || typeof rawAstText !== 'string') return rawAstText;
 
@@ -962,13 +987,11 @@
     return s;
   }
 
-  /* ── Stages 3 & 4: WASM Codegen ────────────────────────────────────── */
   function extractWasm(CJS, filename, source, errors, warnings) {
     let bytes = null;
     let wastText = '';
     let sections = [];
 
-    // Virtual filesystem bridging CJS compiler calls to VFS
     const fakeFs = {
       readFileSync: (path) => {
         const cleanPath = path.replace(/^\/+/, '');
@@ -987,7 +1010,6 @@
       allowEmptyParams: true,
     };
 
-    // Gather all user .c files in VFS, placing current entry point first
     const allCFiles = VFS.list().filter(p => p.endsWith('.c') && !VFS.read(p).generated);
     const compileUnits = [filename].concat(allCFiles.filter(p => p !== filename));
 
@@ -1025,7 +1047,6 @@
     return { bytes, wastText, sections };
   }
 
-  /* ── WASM Binary Parser ────────────────────────────────────────────── */
   const SECTION_NAMES = {
     0:'Custom',1:'Type',2:'Import',3:'Function',4:'Table',5:'Memory',
     6:'Global',7:'Export',8:'Start',9:'Element',10:'Code',11:'Data',12:'DataCount',
@@ -1068,7 +1089,6 @@
     return out;
   }
 
-  /* ── Stage 5: WASM WebWorker Execution ────────────────────────────── */
   function executeWasm(bytes) {
     if (!bytes || bytes.length === 0) {
       termLog('[Runtime] No WASM binary available to execute.', 'err');
@@ -1146,9 +1166,6 @@
     }
   }
 
-  /* ══════════════════════════════════════════════════════════════════════
-     HELPERS
-     ══════════════════════════════════════════════════════════════════════ */
   function $(id) { return document.getElementById(id); }
   function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
