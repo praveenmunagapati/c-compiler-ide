@@ -520,6 +520,19 @@ button, input, select, textarea {
   gap: 4px;
 }
 
+.stage-tabs-nav-horizontal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--vsc-border-sidebar);
+  flex-wrap: wrap;
+}
+
+.margin-left-auto {
+  margin-left: auto;
+}
+
 .stage-nav-btn {
   background: var(--vsc-bg-input);
   border: 1px solid var(--vsc-border-input);

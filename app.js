@@ -181,7 +181,8 @@
         } catch(e) {}
       }
 
-      $('btn-flowchart-render').onclick = () => this.generateAndRender();
+      const btn = $('btn-flowchart-render');
+      if (btn) btn.onclick = () => this.generateAndRender();
     },
 
     generateAndRender() {
@@ -338,7 +339,8 @@
      ══════════════════════════════════════════════════════════════════════ */
   const AlgorithmReconstructor = {
     init() {
-      $('btn-algorithm-render').onclick = () => this.generateAndRender();
+      const btn = $('btn-algorithm-render');
+      if (btn) btn.onclick = () => this.generateAndRender();
     },
 
     generateAndRender() {
@@ -1438,8 +1440,9 @@
     _buildItems() {
       if (this._mode === 'commands') {
         this._items = [
-          { label: 'View Flowchart Graph (Mermaid.js)', shortcut: '', action: () => ActivityBar.switchView('flowchart') },
-          { label: 'View Algorithm Steps', shortcut: '', action: () => ActivityBar.switchView('algorithm') },
+          { label: 'View Flowchart Graph (Mermaid.js)', shortcut: '', action: () => PanelController.switchPanel('flowchart') },
+          { label: 'View Algorithm Steps', shortcut: '', action: () => PanelController.switchPanel('algorithm') },
+          { label: 'View Compilation Stages Output', shortcut: '', action: () => PanelController.switchPanel('stages') },
           { label: 'Start Debugging (F5)', shortcut: 'F5', action: () => Debugger.start() },
           { label: 'Run C Program (Build & Execute)', shortcut: 'Ctrl+Enter', action: () => runPipeline(true) },
           { label: 'Build Target to WebAssembly AST & WASM', shortcut: '', action: () => runPipeline(false) },
@@ -1447,10 +1450,8 @@
           { label: 'Save Active File', shortcut: 'Ctrl+S', action: () => Tabs.saveActive() },
           { label: 'Toggle Primary Sidebar', shortcut: 'Ctrl+B', action: () => ActivityBar.switchView(ActivityBar._activeView) },
           { label: 'Toggle Integrated Terminal Panel', shortcut: 'Ctrl+`', action: () => toggleTerminal() },
-          { label: 'Switch View: Compilation Stages Explorer', shortcut: '', action: () => ActivityBar.switchView('stages') },
           { label: 'Switch View: File Explorer', shortcut: 'Ctrl+Shift+E', action: () => ActivityBar.switchView('explorer') },
           { label: 'Switch View: Global Search', shortcut: 'Ctrl+Shift+F', action: () => ActivityBar.switchView('search') },
-          { label: 'Switch View: Source Control (Git)', shortcut: 'Ctrl+Shift+G', action: () => ActivityBar.switchView('scm') },
           { label: 'Switch View: Run and Debug', shortcut: 'Ctrl+Shift+D', action: () => ActivityBar.switchView('debug') },
           { label: 'Switch View: IDE Settings', shortcut: '', action: () => ActivityBar.switchView('settings') },
           { label: 'Clear Terminal Output', shortcut: '', action: () => $('terminal').innerHTML = '' },
@@ -1550,6 +1551,7 @@
 
       if (panelName === 'flowchart') FlowchartGenerator.generateAndRender();
       if (panelName === 'algorithm') AlgorithmReconstructor.generateAndRender();
+      if (panelName === 'stages') CompilationOutputs.render();
 
       const panel = $('terminal-panel');
       if (panel.classList.contains('collapsed')) {
