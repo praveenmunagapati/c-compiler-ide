@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>C Compiler IDE</title>
-  <meta name="description" content="A browser-based C11 IDE with virtual file system, integrated compiler, and WebAssembly execution.">
+  <title>C Compiler IDE — Visual Studio Code</title>
+  <meta name="description" content="A browser-based C11 IDE inspired by Visual Studio Code with virtual file system, integrated WebAssembly compiler, and live diagnostics.">
 
   <!-- Cross-Origin Isolation for SharedArrayBuffer (GitHub Pages compatibility) -->
   <script src="coi-serviceworker.js"></script>
@@ -12,7 +12,7 @@
   <!-- Google Fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Segoe+UI:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
 
   <!-- Codicon icons (VS Code icon font) -->
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@vscode/codicons@0.0.36/dist/codicon.css" crossorigin="anonymous">
@@ -27,47 +27,61 @@
   <!-- App Stylesheet -->
   <link rel="stylesheet" href="app.css">
 </head>
-<body>
+<body class="vscode-theme-dark-modern">
 
-  <!-- ═══════════ TOOLBAR ═══════════ -->
-  <header class="toolbar" id="toolbar">
-    <div class="toolbar-left">
-      <button id="btn-toggle-sidebar" class="icon-btn sidebar-toggle-btn" title="Toggle Sidebar (Ctrl+B)">
+  <!-- ═══════════ TOP TITLEBAR / MENUBAR ═══════════ -->
+  <header class="vscode-titlebar" id="titlebar">
+    <div class="titlebar-left">
+      <div class="app-icon" title="C Compiler IDE">
+        <i class="codicon codicon-vscode"></i>
+      </div>
+      <nav class="menubar hide-mobile">
+        <div class="menu-item">File</div>
+        <div class="menu-item">Edit</div>
+        <div class="menu-item">Selection</div>
+        <div class="menu-item">View</div>
+        <div class="menu-item">Go</div>
+        <div class="menu-item">Run</div>
+        <div class="menu-item">Terminal</div>
+        <div class="menu-item">Help</div>
+      </nav>
+    </div>
+
+    <div class="titlebar-center">
+      <button class="command-palette-trigger" id="btn-quick-palette" title="Search commands or files (Ctrl+P / Ctrl+Shift+P)">
+        <i class="codicon codicon-search"></i>
+        <span>c-compiler-ide — Quick Open (Ctrl+P)</span>
+        <kbd>Ctrl+P</kbd>
+      </button>
+    </div>
+
+    <div class="titlebar-right">
+      <div class="preset-wrapper hide-mobile">
+        <i class="codicon codicon-library"></i>
+        <select id="preset-select" class="titlebar-select" aria-label="Code preset" title="Select Sample Program"></select>
+      </div>
+
+      <button id="btn-build" class="titlebar-btn titlebar-btn-build" title="Build C Code to AST & WASM">
+        <i class="codicon codicon-tools"></i>
+        <span>Build</span>
+      </button>
+
+      <button id="btn-run" class="titlebar-btn titlebar-btn-run" title="Build & Run (Ctrl+Enter)">
+        <i class="codicon codicon-play"></i>
+        <span>Run</span>
+      </button>
+
+      <button id="btn-debug-header" class="titlebar-btn titlebar-btn-debug" title="Start Debugging (F5)">
+        <i class="codicon codicon-debug-alt"></i>
+        <span>Debug</span>
+      </button>
+
+      <button id="btn-toggle-sidebar" class="titlebar-icon-btn" title="Toggle Primary Side Bar (Ctrl+B)">
         <i class="codicon codicon-sidebar-left"></i>
       </button>
 
-      <div class="brand">
-        <div class="brand-icon">
-          <i class="codicon codicon-code"></i>
-        </div>
-        <span class="brand-title">C Compiler IDE</span>
-        <span class="brand-badge">C11 WASM</span>
-      </div>
-
-      <div class="toolbar-sep hide-mobile"></div>
-
-      <div class="preset-wrapper">
-        <i class="codicon codicon-library"></i>
-        <select id="preset-select" class="toolbar-select" aria-label="Code preset"></select>
-      </div>
-    </div>
-
-    <div class="toolbar-right">
-      <button id="btn-new" class="toolbar-btn toolbar-btn-new" title="New File (Ctrl+N)">
-        <i class="codicon codicon-new-file"></i>
-        <span class="btn-text">New File</span>
-      </button>
-
-      <div class="toolbar-sep hide-mobile"></div>
-
-      <button id="btn-build" class="toolbar-btn toolbar-btn-build" title="Build AST & WASM">
-        <i class="codicon codicon-tools"></i>
-        <span class="btn-text">Build</span>
-      </button>
-
-      <button id="btn-run" class="toolbar-btn toolbar-btn-run" title="Build & Run (Ctrl+Enter)">
-        <i class="codicon codicon-play"></i>
-        <span class="btn-text">Run</span>
+      <button id="btn-toggle-panel" class="titlebar-icon-btn" title="Toggle Panel (Ctrl+`)">
+        <i class="codicon codicon-layout-panel"></i>
       </button>
     </div>
   </header>
@@ -78,34 +92,303 @@
     <!-- Mobile Sidebar Backdrop Overlay -->
     <div id="sidebar-backdrop" class="sidebar-backdrop"></div>
 
-    <!-- SIDEBAR: File Explorer -->
+    <!-- 1. ACTIVITY BAR (Far Left Vertical Bar - 48px) -->
+    <aside class="activity-bar" id="activity-bar">
+      <div class="activity-group activity-top">
+        <button class="activity-item active" id="act-explorer" data-view="explorer" title="Explorer (Ctrl+Shift+E)">
+          <i class="codicon codicon-files"></i>
+          <span class="active-indicator"></span>
+        </button>
+        <button class="activity-item" id="act-stages" data-view="stages" title="Compilation Stages Viewer">
+          <i class="codicon codicon-circuit-board"></i>
+          <span class="active-indicator"></span>
+        </button>
+        <button class="activity-item" id="act-search" data-view="search" title="Search (Ctrl+Shift+F)">
+          <i class="codicon codicon-search"></i>
+          <span class="active-indicator"></span>
+        </button>
+        <button class="activity-item" id="act-scm" data-view="scm" title="Source Control (Ctrl+Shift+G)">
+          <i class="codicon codicon-source-control"></i>
+          <span class="badge" id="scm-badge">1</span>
+          <span class="active-indicator"></span>
+        </button>
+        <button class="activity-item" id="act-debug" data-view="debug" title="Run and Debug (Ctrl+Shift+D)">
+          <i class="codicon codicon-debug-alt"></i>
+          <span class="active-indicator"></span>
+        </button>
+        <button class="activity-item" id="act-extensions" data-view="extensions" title="Extensions (Ctrl+Shift+X)">
+          <i class="codicon codicon-extensions"></i>
+          <span class="active-indicator"></span>
+        </button>
+      </div>
+
+      <div class="activity-group activity-bottom">
+        <button class="activity-item" id="act-accounts" title="Accounts">
+          <i class="codicon codicon-account"></i>
+        </button>
+        <button class="activity-item" id="act-settings" data-view="settings" title="Manage Settings">
+          <i class="codicon codicon-settings-gear"></i>
+          <span class="active-indicator"></span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 2. PRIMARY SIDEBAR (Collapsible & Dynamic Views) -->
     <aside class="sidebar" id="sidebar">
-      <div class="sidebar-header">
-        <span class="sidebar-title">EXPLORER</span>
-        <div class="sidebar-actions">
-          <button id="btn-sidebar-new" class="sidebar-action-btn" title="New File (Ctrl+N)">
-            <i class="codicon codicon-new-file"></i>
-          </button>
-          <button id="btn-sidebar-clean" class="sidebar-action-btn" title="Clear Generated Files">
-            <i class="codicon codicon-trash"></i>
-          </button>
+
+      <!-- View 1: Explorer -->
+      <div class="sidebar-view active" id="view-explorer">
+        <div class="sidebar-header">
+          <span class="sidebar-title">EXPLORER</span>
+          <div class="sidebar-actions">
+            <button id="btn-sidebar-new" class="sidebar-action-btn" title="New File (Ctrl+N)">
+              <i class="codicon codicon-new-file"></i>
+            </button>
+            <button id="btn-sidebar-clean" class="sidebar-action-btn" title="Clear Workspace">
+              <i class="codicon codicon-clear-all"></i>
+            </button>
+            <button id="btn-sidebar-collapse" class="sidebar-action-btn" title="Collapse All">
+              <i class="codicon codicon-collapse-all"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Section: Open Editors -->
+        <div class="sidebar-section" id="sec-open-editors">
+          <div class="sidebar-section-header" id="header-open-editors">
+            <i class="codicon codicon-chevron-down" id="icon-open-editors"></i>
+            <span>OPEN EDITORS</span>
+          </div>
+          <div class="sidebar-section-body" id="list-open-editors">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Section: Project Files Tree -->
+        <div class="sidebar-section" id="sec-project-files">
+          <div class="sidebar-section-header" id="header-project-files">
+            <i class="codicon codicon-chevron-down" id="icon-project-files"></i>
+            <span>C-COMPILER-IDE</span>
+          </div>
+          <div class="sidebar-section-body file-tree" id="file-tree">
+            <!-- Populated by JS -->
+          </div>
         </div>
       </div>
-      <div class="sidebar-section">
-        <div class="sidebar-section-header" id="sidebar-project-header">
-          <i class="codicon codicon-chevron-down"></i>
-          <span>PROJECT FILES</span>
+
+      <!-- View 2: Compilation Stages Viewer (On-demand inspection) -->
+      <div class="sidebar-view" id="view-stages">
+        <div class="sidebar-header">
+          <span class="sidebar-title">COMPILATION STAGES</span>
+          <div class="sidebar-actions">
+            <button id="btn-stages-refresh" class="sidebar-action-btn" title="Re-compile & Update Stages">
+              <i class="codicon codicon-refresh"></i>
+            </button>
+          </div>
         </div>
-        <div class="file-tree" id="file-tree">
-          <!-- Populated by JS -->
+        <div class="sidebar-view-content">
+          <p class="stage-info-desc">Explore build outputs without adding generated files to your workspace tab bar:</p>
+          <div class="stage-tabs-nav margin-top-6">
+            <button class="stage-nav-btn active" id="btn-stage-pp" data-stage="pp">
+              <i class="codicon codicon-file-code"></i> Preprocessed (.i)
+            </button>
+            <button class="stage-nav-btn" id="btn-stage-ast" data-stage="ast">
+              <i class="codicon codicon-type-hierarchy"></i> AST Tree (.ast)
+            </button>
+            <button class="stage-nav-btn" id="btn-stage-wat" data-stage="wat">
+              <i class="codicon codicon-file-binary"></i> WASM Text (.wat)
+            </button>
+            <button class="stage-nav-btn" id="btn-stage-sec" data-stage="sec">
+              <i class="codicon codicon-output"></i> Binary Sections
+            </button>
+          </div>
+          <div class="stage-viewer-box margin-top-12">
+            <div class="stage-viewer-header">
+              <span id="stage-viewer-title">Preprocessed Source</span>
+              <button id="btn-stage-copy" class="sidebar-action-btn" title="Copy Output"><i class="codicon codicon-copy"></i></button>
+            </div>
+            <pre class="stage-viewer-content" id="stage-viewer-content">// Press ▶ Run or Build to generate compilation stage outputs.</pre>
+          </div>
         </div>
       </div>
+
+      <!-- View 3: Search -->
+      <div class="sidebar-view" id="view-search">
+        <div class="sidebar-header">
+          <span class="sidebar-title">SEARCH</span>
+          <div class="sidebar-actions">
+            <button id="btn-search-refresh" class="sidebar-action-btn" title="Refresh Search">
+              <i class="codicon codicon-refresh"></i>
+            </button>
+            <button id="btn-search-clear" class="sidebar-action-btn" title="Clear Search">
+              <i class="codicon codicon-clear-all"></i>
+            </button>
+          </div>
+        </div>
+        <div class="sidebar-view-content">
+          <div class="search-box-wrapper">
+            <div class="input-with-icon">
+              <i class="codicon codicon-search search-input-icon"></i>
+              <input type="text" id="search-input" class="vscode-input" placeholder="Search (e.g. main, printf, int)" autocomplete="off" spellcheck="false" />
+            </div>
+            <div class="input-with-icon margin-top-6">
+              <i class="codicon codicon-replace search-input-icon"></i>
+              <input type="text" id="replace-input" class="vscode-input" placeholder="Replace" autocomplete="off" spellcheck="false" />
+            </div>
+          </div>
+          <div class="search-results-header" id="search-results-header">
+            <span>Type to search across workspace files</span>
+          </div>
+          <div class="search-results-tree" id="search-results-tree">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+      </div>
+
+      <!-- View 4: Source Control (Git) -->
+      <div class="sidebar-view" id="view-scm">
+        <div class="sidebar-header">
+          <span class="sidebar-title">SOURCE CONTROL</span>
+          <div class="sidebar-actions">
+            <button id="btn-scm-commit" class="sidebar-action-btn" title="Commit Changes">
+              <i class="codicon codicon-check"></i>
+            </button>
+            <button id="btn-scm-refresh" class="sidebar-action-btn" title="Refresh Status">
+              <i class="codicon codicon-refresh"></i>
+            </button>
+          </div>
+        </div>
+        <div class="sidebar-view-content">
+          <div class="scm-commit-box">
+            <textarea id="scm-commit-msg" class="vscode-textarea" placeholder="Message (Ctrl+Enter to commit)" rows="2"></textarea>
+            <button id="btn-scm-commit-action" class="vscode-btn vscode-btn-primary full-width margin-top-6">
+              <i class="codicon codicon-check"></i> Commit
+            </button>
+          </div>
+          <div class="sidebar-section margin-top-12">
+            <div class="sidebar-section-header">
+              <i class="codicon codicon-chevron-down"></i>
+              <span>CHANGES</span>
+              <span class="badge" id="scm-changes-count">1</span>
+            </div>
+            <div class="sidebar-section-body" id="scm-changes-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- View 5: Run & Debug -->
+      <div class="sidebar-view" id="view-debug">
+        <div class="sidebar-header">
+          <span class="sidebar-title">RUN AND DEBUG</span>
+        </div>
+        <div class="sidebar-view-content">
+          <div class="debug-start-wrapper">
+            <button id="btn-debug-start" class="vscode-btn vscode-btn-primary full-width">
+              <i class="codicon codicon-debug-alt"></i> Start Debugging (F5)
+            </button>
+          </div>
+
+          <!-- Section: Variables -->
+          <div class="sidebar-section margin-top-12">
+            <div class="sidebar-section-header">
+              <i class="codicon codicon-chevron-down"></i>
+              <span>VARIABLES</span>
+            </div>
+            <div class="sidebar-section-body debug-vars-tree" id="debug-variables-tree">
+              <div class="dim font-11 padding-6">Start debugging or set breakpoints to inspect variables.</div>
+            </div>
+          </div>
+
+          <!-- Section: Watch -->
+          <div class="sidebar-section margin-top-12">
+            <div class="sidebar-section-header">
+              <i class="codicon codicon-chevron-down"></i>
+              <span>WATCH</span>
+            </div>
+            <div class="sidebar-section-body" id="debug-watch-tree">
+              <div class="dim font-11 padding-6">No watch expressions added.</div>
+            </div>
+          </div>
+
+          <!-- Section: Call Stack -->
+          <div class="sidebar-section margin-top-12">
+            <div class="sidebar-section-header">
+              <i class="codicon codicon-chevron-down"></i>
+              <span>CALL STACK</span>
+            </div>
+            <div class="sidebar-section-body debug-stack-list" id="debug-call-stack">
+              <div class="debug-stack-item"><i class="codicon codicon-symbol-method"></i> main() — main.c:4</div>
+            </div>
+          </div>
+
+          <!-- Section: Breakpoints -->
+          <div class="sidebar-section margin-top-12">
+            <div class="sidebar-section-header">
+              <i class="codicon codicon-chevron-down"></i>
+              <span>BREAKPOINTS</span>
+            </div>
+            <div class="sidebar-section-body" id="debug-breakpoints-list">
+              <!-- Populated by JS -->
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- View 6: Settings -->
+      <div class="sidebar-view" id="view-settings">
+        <div class="sidebar-header">
+          <span class="sidebar-title">SETTINGS</span>
+        </div>
+        <div class="sidebar-view-content">
+          <div class="setting-item">
+            <label class="setting-label">Color Theme</label>
+            <select id="setting-theme" class="vscode-select full-width">
+              <option value="vscode-theme-dark-modern">VS Code Dark Modern</option>
+              <option value="vscode-theme-dark-plus">VS Code Dark+</option>
+              <option value="vscode-theme-monokai">Monokai</option>
+              <option value="vscode-theme-light-plus">VS Code Light+</option>
+            </select>
+          </div>
+
+          <div class="setting-item margin-top-12">
+            <label class="setting-label">Font Size (px)</label>
+            <input type="number" id="setting-font-size" class="vscode-input full-width" value="14" min="10" max="24" />
+          </div>
+
+          <div class="setting-item margin-top-12">
+            <label class="setting-label">Tab Size (Spaces)</label>
+            <select id="setting-tab-size" class="vscode-select full-width">
+              <option value="2">2 Spaces</option>
+              <option value="4" selected>4 Spaces</option>
+              <option value="8">8 Spaces</option>
+            </select>
+          </div>
+
+          <div class="setting-item margin-top-12">
+            <label class="setting-checkbox-label">
+              <input type="checkbox" id="setting-minimap" />
+              <span>Enable Editor Minimap</span>
+            </label>
+          </div>
+
+          <div class="setting-item margin-top-12">
+            <label class="setting-checkbox-label">
+              <input type="checkbox" id="setting-word-wrap" checked />
+              <span>Word Wrap Code</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
     </aside>
 
     <!-- SIDEBAR RESIZE HANDLE -->
     <div class="sidebar-resize" id="sidebar-resize"></div>
 
-    <!-- WORKBENCH: Editor + Terminal -->
+    <!-- 3. WORKBENCH (Editor + Bottom Panel) -->
     <main class="workbench">
 
       <!-- TAB BAR -->
@@ -115,77 +398,188 @@
         </div>
       </div>
 
-      <!-- EDITOR -->
+      <!-- BREADCRUMBS BAR -->
+      <div class="breadcrumbs-bar" id="breadcrumbs-bar">
+        <i class="codicon codicon-folder"></i>
+        <span>c-compiler-ide</span>
+        <i class="codicon codicon-chevron-right breadcrumb-sep"></i>
+        <i class="codicon codicon-file-code" id="breadcrumb-file-icon"></i>
+        <span id="breadcrumb-filename">main.c</span>
+        <i class="codicon codicon-chevron-right breadcrumb-sep"></i>
+        <i class="codicon codicon-symbol-method"></i>
+        <span id="breadcrumb-symbol">main()</span>
+      </div>
+
+      <!-- EDITOR AREA -->
       <div class="editor-area" id="editor-area">
+        <!-- FLOATING DEBUG CONTROL TOOLBAR -->
+        <div class="debug-floating-bar hidden" id="debug-floating-bar">
+          <div class="debug-bar-handle"><i class="codicon codicon-grip-dots-vertical"></i></div>
+          <button id="btn-dbg-continue" class="debug-bar-btn" title="Continue (F5)"><i class="codicon codicon-play"></i></button>
+          <button id="btn-dbg-step-over" class="debug-bar-btn" title="Step Over (F10)"><i class="codicon codicon-debug-step-over"></i></button>
+          <button id="btn-dbg-step-into" class="debug-bar-btn" title="Step Into (F11)"><i class="codicon codicon-debug-step-into"></i></button>
+          <button id="btn-dbg-step-out" class="debug-bar-btn" title="Step Out (Shift+F11)"><i class="codicon codicon-debug-step-out"></i></button>
+          <button id="btn-dbg-restart" class="debug-bar-btn" title="Restart (Ctrl+Shift+F5)"><i class="codicon codicon-debug-restart"></i></button>
+          <button id="btn-dbg-stop" class="debug-bar-btn danger" title="Stop Debugging (Shift+F5)"><i class="codicon codicon-debug-stop"></i></button>
+        </div>
+
         <div id="monaco-editor"></div>
 
         <!-- Welcome screen when no tabs are open -->
         <div class="welcome-screen" id="welcome-screen">
           <div class="welcome-card">
             <div class="welcome-icon">
-              <i class="codicon codicon-code"></i>
+              <i class="codicon codicon-vscode"></i>
             </div>
-            <h2>C Compiler IDE</h2>
-            <p>Build, test, and run C programs inside WebAssembly with interactive virtual files.</p>
+            <h2>Visual Studio Code — C Compiler IDE</h2>
+            <p>Editing & WebAssembly C11 Execution Platform</p>
 
             <div class="welcome-actions">
               <button class="welcome-btn welcome-btn-primary" id="btn-welcome-new">
-                <i class="codicon codicon-new-file"></i> Create New File
+                <i class="codicon codicon-new-file"></i> New File (Ctrl+N)
               </button>
-              <button class="welcome-btn welcome-btn-secondary" id="btn-welcome-preset">
-                <i class="codicon codicon-sparkle"></i> Open Presets
+              <button class="welcome-btn welcome-btn-secondary" id="btn-welcome-palette">
+                <i class="codicon codicon-terminal"></i> Command Palette (Ctrl+Shift+P)
               </button>
             </div>
 
             <div class="welcome-shortcuts">
-              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> <span>Build &amp; Run Active File</span></div>
-              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>N</kbd> <span>Create New File</span></div>
+              <div class="shortcut-item"><kbd>F5</kbd> <span>Start Debugging</span></div>
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> <span>Build &amp; Run Program</span></div>
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>P</kbd> <span>Quick Open File</span></div>
+              <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> <span>Command Palette</span></div>
               <div class="shortcut-item"><kbd>Ctrl</kbd>+<kbd>B</kbd> <span>Toggle Sidebar</span></div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- TERMINAL RESIZE HANDLE -->
+      <!-- TERMINAL / PANEL RESIZE HANDLE -->
       <div class="terminal-resize" id="terminal-resize"></div>
 
-      <!-- TERMINAL PANEL -->
+      <!-- 4. BOTTOM PANEL (Multi-tab: PROBLEMS, OUTPUT, DEBUG CONSOLE, TERMINAL) -->
       <section class="terminal-panel" id="terminal-panel">
-        <div class="terminal-header">
+        <div class="terminal-header" id="terminal-header-bar">
           <div class="terminal-tabs">
-            <span class="terminal-tab active">
-              <i class="codicon codicon-terminal"></i> Output / Terminal
-            </span>
-          </div>
-          <div class="terminal-actions">
-            <button class="terminal-action-btn" id="btn-clear-term" title="Clear Terminal">
-              <i class="codicon codicon-clear-all"></i> <span class="btn-text">Clear</span>
+            <button class="terminal-tab" id="ptab-problems" data-panel="problems">
+              <i class="codicon codicon-error"></i> PROBLEMS <span class="badge badge-error" id="problems-count-badge">0</span>
             </button>
-            <button class="terminal-action-btn" id="btn-toggle-term" title="Toggle Panel">
-              <i class="codicon codicon-chevron-down"></i>
+            <button class="terminal-tab" id="ptab-output" data-panel="output">
+              <i class="codicon codicon-output"></i> OUTPUT
+            </button>
+            <button class="terminal-tab" id="ptab-debug" data-panel="debug">
+              <i class="codicon codicon-debug-console"></i> DEBUG CONSOLE
+            </button>
+            <button class="terminal-tab active" id="ptab-terminal" data-panel="terminal">
+              <i class="codicon codicon-terminal"></i> TERMINAL
+            </button>
+          </div>
+
+          <div class="terminal-actions">
+            <button class="terminal-action-btn" id="btn-clear-term" title="Clear Panel Output">
+              <i class="codicon codicon-clear-all"></i>
+            </button>
+            <button class="terminal-action-btn" id="btn-toggle-term" title="Toggle Terminal Panel (Ctrl+`)">
+              <i class="codicon codicon-chevron-down" id="term-toggle-icon"></i>
+            </button>
+            <button class="terminal-action-btn" id="btn-close-term" title="Close Panel">
+              <i class="codicon codicon-close"></i>
             </button>
           </div>
         </div>
-        <div class="terminal-body" id="terminal">
-          <div class="term-line term-sys">C Compiler IDE — Ready. Press ▶ Run or Ctrl+Enter.</div>
+
+        <!-- Panel Contents -->
+        <div class="panel-body-wrapper">
+
+          <!-- 1. Problems Panel Content -->
+          <div class="panel-body-content hidden" id="pbody-problems">
+            <div class="problems-list" id="problems-list">
+              <div class="problems-empty">
+                <i class="codicon codicon-check-all"></i>
+                <span>No problems have been detected in the workspace so far.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. Output Panel Content -->
+          <div class="panel-body-content hidden" id="pbody-output">
+            <div class="output-log" id="output-log">
+              <div class="term-line term-sys">C Compiler Pipeline Output Log — Ready.</div>
+            </div>
+          </div>
+
+          <!-- 3. Debug Console Content -->
+          <div class="panel-body-content hidden" id="pbody-debug">
+            <div class="debug-console-wrapper">
+              <div class="debug-log" id="debug-log">
+                <div class="term-line term-sys">WebAssembly Runtime Debug Console — Idle. Type an expression or variable name below to evaluate.</div>
+              </div>
+              <div class="debug-console-input-bar">
+                <span class="debug-prompt-symbol">&gt;</span>
+                <input type="text" id="debug-console-input" class="debug-console-input" placeholder="Evaluate expression or variable (e.g. sum, i)..." autocomplete="off" spellcheck="false" />
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. Terminal Content -->
+          <div class="panel-body-content active" id="pbody-terminal">
+            <div class="terminal-body" id="terminal">
+              <div class="term-line term-sys">C Compiler IDE — Integrated Terminal [C11 WASM Runtime].</div>
+              <div class="term-line term-sys">Type code or press ▶ Run (Ctrl+Enter) to execute your C module.</div>
+            </div>
+          </div>
+
         </div>
       </section>
+
     </main>
   </div>
 
   <!-- ═══════════ STATUS BAR ═══════════ -->
   <footer class="status-bar" id="status-bar">
     <div class="status-left">
+      <span class="status-remote-badge" id="status-remote" title="WebAssembly Isolated Runtime">
+        <i class="codicon codicon-remote"></i> C11 WASM
+      </span>
+      <span class="status-item" id="status-git" title="Git Branch">
+        <i class="codicon codicon-git-branch"></i> main*
+      </span>
+      <span class="status-item status-problems-btn" id="status-problems-item" title="Click to view Problems">
+        <i class="codicon codicon-error"></i> <span id="status-err-count">0</span>
+        <i class="codicon codicon-warning"></i> <span id="status-warn-count">0</span>
+      </span>
       <span class="status-item status-badge-ok" id="status-build">
         <i class="codicon codicon-check"></i> Ready
       </span>
     </div>
+
     <div class="status-right">
-      <span class="status-item" id="status-file"><i class="codicon codicon-file"></i> main.c</span>
-      <span class="status-item hide-mobile" id="status-lang"><i class="codicon codicon-code"></i> C</span>
       <span class="status-item" id="status-cursor">Ln 1, Col 1</span>
+      <span class="status-item hide-mobile" id="status-spaces">Spaces: 4</span>
+      <span class="status-item hide-mobile">UTF-8</span>
+      <span class="status-item hide-mobile">LF</span>
+      <span class="status-item" id="status-lang"><i class="codicon codicon-code"></i> C</span>
+      <span class="status-item" title="Notifications"><i class="codicon codicon-bell"></i></span>
     </div>
   </footer>
+
+  <!-- ═══════════ COMMAND PALETTE & QUICK OPEN MODAL ═══════════ -->
+  <div id="command-palette-overlay" class="palette-overlay hidden">
+    <div class="palette-card">
+      <div class="palette-input-wrapper">
+        <span class="palette-prefix" id="palette-prefix">&gt;</span>
+        <input type="text" id="palette-input" class="palette-input" placeholder="Type a command or file name..." autocomplete="off" spellcheck="false" />
+      </div>
+      <div class="palette-results" id="palette-results">
+        <!-- Dynamic command/file items populated by JS -->
+      </div>
+      <div class="palette-footer">
+        <span><kbd>↑</kbd> <kbd>↓</kbd> to navigate</span>
+        <span><kbd>↵</kbd> to select</span>
+        <span><kbd>esc</kbd> to dismiss</span>
+      </div>
+    </div>
+  </div>
 
   <!-- ═══════════ CONTEXT MENU ═══════════ -->
   <div id="context-menu" class="context-menu hidden">
@@ -219,7 +613,7 @@
     </div>
   </div>
 
-  <!-- App Logic (after DOM) -->
+  <!-- App Logic -->
   <script src="app.js"></script>
 </body>
 </html>

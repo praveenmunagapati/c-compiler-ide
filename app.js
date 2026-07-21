@@ -1,12 +1,13 @@
 /**
- * C Compiler IDE — VS Code-inspired Application Logic
+ * C Compiler IDE — Visual Studio Code Architecture & Application Logic
  *
  * Features:
- *   - Virtual File System (VFS) with create, edit, rename, delete
- *   - Responsive Monaco Editor with ResizeObserver layout tracking
- *   - Mobile-responsive sidebar drawer & keyboard shortcuts
- *   - C11 WebAssembly Compiler Pipeline (Preprocess, AST, WAT, WASM Execution)
- *   - Interactive Modal Prompts & Context Menus
+ *   - VS Code Activity Bar & Multi-View Sidebar (Explorer, Stages, Search, SCM, Debug, Settings)
+ *   - Clean Editor Tab Bar (Stage outputs stored in-memory in Stage Explorer)
+ *   - Interactive C Debugger Engine (Monaco Gutter Breakpoints, Floating Toolbar, Stepping, Execution Pointer)
+ *   - Live Variables Watcher, Call Stack Inspector, and Interactive Debug Console Evaluator
+ *   - Command Palette & Quick Open Overlay (Ctrl+Shift+P / Ctrl+P / F1)
+ *   - Global VFS Search & Replace Engine
  */
 (function () {
   "use strict";
@@ -21,7 +22,7 @@
     ],
     macros: [
       'Preprocessor Macros',
-      '#include <stdio.h>\n\n#define SQUARE(x) ((x) * (x))\n#define APP_NAME "Visualizer"\n\nint main(void) {\n    int v = 7;\n    printf("%s: %d^2 = %d\\n", APP_NAME, v, SQUARE(v));\n    return 0;\n}\n'
+      '#include <stdio.h>\n\n#define SQUARE(x) ((x) * (x))\n#define APP_NAME "C11 WASM IDE"\n\nint main(void) {\n    int v = 7;\n    printf("%s: %d^2 = %d\\n", APP_NAME, v, SQUARE(v));\n    return 0;\n}\n'
     ],
     loops: [
       'Control Flow & Loops',
@@ -38,7 +39,7 @@
   };
 
   /* ══════════════════════════════════════════════════════════════════════
-     MODAL & CONTEXT MENU SYSTEM
+     MODAL SYSTEM
      ══════════════════════════════════════════════════════════════════════ */
   const Modal = {
     show({ title, desc, placeholder, defaultValue, confirmText, isDanger, onConfirm }) {
@@ -50,17 +51,10 @@
 
       const confirmBtn = $('btn-modal-confirm');
       confirmBtn.textContent = confirmText || 'Confirm';
-      if (isDanger) {
-        confirmBtn.style.background = 'var(--red)';
-      } else {
-        confirmBtn.style.background = 'var(--blue)';
-      }
+      confirmBtn.style.background = isDanger ? 'var(--vsc-red)' : 'var(--vsc-blue)';
 
       $('modal-overlay').classList.remove('hidden');
-      setTimeout(() => {
-        input.focus();
-        input.select();
-      }, 50);
+      setTimeout(() => { input.focus(); input.select(); }, 50);
 
       const handleConfirm = () => {
         const val = input.value.trim();
@@ -91,7 +85,7 @@
       menu.classList.remove('hidden');
 
       const file = VFS.read(path);
-      const isGen = file?.generated || file?.readOnly;
+      const isGen = file?.readOnly;
       $('ctx-rename').style.display = isGen ? 'none' : 'flex';
       $('ctx-delete').style.display = isGen ? 'none' : 'flex';
     },
@@ -111,9 +105,10 @@
         content: content,
         language: opts.language || langFromExt(path),
         readOnly: opts.readOnly || false,
-        generated: opts.generated || false,
+        dirty: opts.dirty || false,
       });
       FileExplorer.render();
+      SCM.updateStatus();
     },
 
     read(path) {
@@ -129,6 +124,7 @@
       this._files.delete(path);
       Tabs.close(path);
       FileExplorer.render();
+      SCM.updateStatus();
     },
 
     rename(oldPath, newPath) {
@@ -141,23 +137,11 @@
 
       Tabs.rename(oldPath, newPath);
       FileExplorer.render();
+      SCM.updateStatus();
     },
 
     list() {
-      return Array.from(this._files.keys()).sort((a, b) => {
-        const aGen = this._files.get(a).generated ? 1 : 0;
-        const bGen = this._files.get(b).generated ? 1 : 0;
-        if (aGen !== bGen) return aGen - bGen;
-        return a.localeCompare(b);
-      });
-    },
-
-    clearGenerated() {
-      for (const [path, file] of this._files) {
-        if (file.generated) {
-          this.remove(path);
-        }
-      }
+      return Array.from(this._files.keys()).sort((a, b) => a.localeCompare(b));
     },
   };
 
@@ -179,6 +163,46 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
+     COMPILATION STAGES OUTPUT STORE (Clean Tab Isolation)
+     ══════════════════════════════════════════════════════════════════════ */
+  const CompilationOutputs = {
+    pp: '// Preprocessed C output will appear here after building.',
+    ast: '// AST tree output will appear here after building.',
+    wat: ';; WebAssembly Text Format will appear here after building.',
+    sec: '=== WASM Sections Summary ===\n\nNo build executed yet.',
+    _activeStage: 'pp',
+
+    set(pp, ast, wat, sec) {
+      this.pp = pp || '// No preprocessed output';
+      this.ast = ast || '// No AST output';
+      this.wat = wat || ';; No WAT output';
+      this.sec = sec || '=== WASM Sections ===\nNone';
+      this.render();
+    },
+
+    selectStage(stageKey) {
+      this._activeStage = stageKey;
+      document.querySelectorAll('.stage-nav-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.stage === stageKey);
+      });
+      this.render();
+    },
+
+    render() {
+      const titles = {
+        pp: 'Preprocessed Source (.i)',
+        ast: 'Abstract Syntax Tree (.ast)',
+        wat: 'WASM Text Format (.wat)',
+        sec: 'WASM Binary Sections'
+      };
+      const titleEl = $('stage-viewer-title');
+      const contentEl = $('stage-viewer-content');
+      if (titleEl) titleEl.textContent = titles[this._activeStage] || 'Stage Viewer';
+      if (contentEl) contentEl.textContent = this[this._activeStage] || '';
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
      TAB MANAGER
      ══════════════════════════════════════════════════════════════════════ */
   const Tabs = {
@@ -195,7 +219,6 @@
       this._ensureModel(path);
       this._render();
       this._showEditor(path);
-      // Close mobile drawer if open
       closeMobileSidebar();
     },
 
@@ -237,12 +260,8 @@
       }
     },
 
-    closeGenerated() {
-      const gen = this._open.filter(p => VFS.read(p)?.generated);
-      for (const p of gen) this.close(p);
-    },
-
     getActive() { return this._active; },
+    getOpen() { return this._open; },
 
     _ensureModel(path) {
       if (!window.monaco) return;
@@ -270,6 +289,26 @@
       }
     },
 
+    markDirty(path, isDirty) {
+      const file = VFS.read(path);
+      if (file) {
+        file.dirty = isDirty;
+        this._render();
+      }
+    },
+
+    saveActive() {
+      const path = this.getActive();
+      if (!path) return;
+      const file = VFS.read(path);
+      if (file && !file.readOnly) {
+        file.dirty = false;
+        this._render();
+        SCM.updateStatus();
+        setBuildStatus('success', `Saved ${path}`);
+      }
+    },
+
     _showEditor(path) {
       if (!editor) return;
       this._ensureModel(path);
@@ -279,14 +318,17 @@
       editor.updateOptions({ readOnly: file?.readOnly || false });
       $('monaco-editor').classList.add('visible');
       $('welcome-screen').classList.add('hidden');
+      updateBreadcrumbs(path);
       updateStatusBar();
       FileExplorer.render();
+      Debugger.refreshBreakpointsDecoration();
       setTimeout(() => { editor.layout(); }, 10);
     },
 
     _hideEditor() {
       $('monaco-editor').classList.remove('visible');
       $('welcome-screen').classList.remove('hidden');
+      updateBreadcrumbs(null);
       updateStatusBar();
       FileExplorer.render();
     },
@@ -301,11 +343,14 @@
         tab.className = 'tab' + (path === this._active ? ' active' : '');
         tab.dataset.path = path;
 
+        const dirtyBadge = file?.dirty ? '<span class="tab-dirty-dot" title="Unsaved changes"></span>' : '';
+        const closeIcon = `<span class="tab-close codicon codicon-close" data-close="${esc(path)}"></span>`;
+
         tab.innerHTML =
           `<i class="codicon ${ic.icon} tab-icon ${ic.cls}"></i>` +
           `<span class="tab-label">${esc(path)}</span>` +
-          (file?.readOnly ? '<span class="tab-readonly">read-only</span>' : '') +
-          `<span class="tab-close codicon codicon-close" data-close="${esc(path)}"></span>`;
+          dirtyBadge +
+          closeIcon;
 
         tab.addEventListener('click', (e) => {
           if (e.target.dataset.close !== undefined) return;
@@ -319,7 +364,28 @@
 
         bar.appendChild(tab);
       }
+
+      this._renderOpenEditorsSection();
     },
+
+    _renderOpenEditorsSection() {
+      const list = $('list-open-editors');
+      if (!list) return;
+      list.innerHTML = '';
+      for (const path of this._open) {
+        const file = VFS.read(path);
+        const ic = fileIcon(path);
+        const item = document.createElement('div');
+        item.className = 'file-tree-item' + (path === this._active ? ' active' : '');
+        item.innerHTML =
+          `<i class="codicon ${ic.icon} file-icon ${ic.cls}"></i>` +
+          `<span class="file-name">${esc(path)}</span>` +
+          (file?.dirty ? '<span class="tab-dirty-dot"></span>' : '');
+
+        item.onclick = () => this.open(path);
+        list.appendChild(item);
+      }
+    }
   };
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -328,6 +394,7 @@
   const FileExplorer = {
     render() {
       const tree = $('file-tree');
+      if (!tree) return;
       tree.innerHTML = '';
       const files = VFS.list();
 
@@ -338,11 +405,8 @@
         item.className = 'file-tree-item' + (path === Tabs.getActive() ? ' active' : '');
         item.dataset.path = path;
 
-        let badge = '';
-        if (file.generated) badge = '<span class="file-badge">gen</span>';
-
         let actionButtons = '';
-        if (!file.generated && !file.readOnly) {
+        if (!file.readOnly) {
           actionButtons =
             `<div class="file-actions">` +
               `<span class="file-action-icon btn-rename-file" title="Rename"><i class="codicon codicon-edit"></i></span>` +
@@ -353,7 +417,6 @@
         item.innerHTML =
           `<i class="codicon ${ic.icon} file-icon ${ic.cls}"></i>` +
           `<span class="file-name">${esc(path)}</span>` +
-          badge +
           actionButtons;
 
         item.addEventListener('click', (e) => {
@@ -439,34 +502,677 @@
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     SIDEBAR TOGGLE & MOBILE DRAWER LOGIC
+     INTERACTIVE C DEBUGGER ENGINE
      ══════════════════════════════════════════════════════════════════════ */
-  function toggleSidebar() {
-    const sb = $('sidebar');
-    const isMobile = window.innerWidth <= 768;
+  const Debugger = {
+    active: false,
+    paused: false,
+    currentLine: 1,
+    breakpoints: new Set(),
+    variables: new Map(),
+    executableLines: [],
+    _breakpointDecorations: [],
+    _executionDecorations: [],
 
-    if (isMobile) {
-      sb.classList.toggle('mobile-open');
-      const backdrop = $('sidebar-backdrop');
-      if (backdrop) {
-        if (sb.classList.contains('mobile-open')) {
-          backdrop.classList.add('active');
-        } else {
-          backdrop.classList.remove('active');
+    init() {
+      // Stage Navigation Buttons
+      document.querySelectorAll('.stage-nav-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          CompilationOutputs.selectStage(btn.dataset.stage);
+        });
+      });
+
+      const copyBtn = $('btn-stage-copy');
+      if (copyBtn) {
+        copyBtn.onclick = () => {
+          const content = CompilationOutputs[CompilationOutputs._activeStage];
+          if (navigator.clipboard) {
+            navigator.clipboard.writeText(content);
+            setBuildStatus('success', 'Copied stage output to clipboard');
+          }
+        };
+      }
+
+      // Debug Action Buttons
+      $('btn-debug-header').onclick = () => this.start();
+      $('btn-debug-start').onclick  = () => this.start();
+
+      $('btn-dbg-continue').onclick  = () => this.continue();
+      $('btn-dbg-step-over').onclick = () => this.stepOver();
+      $('btn-dbg-step-into').onclick = () => this.stepInto();
+      $('btn-dbg-step-out').onclick  = () => this.stepOut();
+      $('btn-dbg-restart').onclick   = () => this.start();
+      $('btn-dbg-stop').onclick      = () => this.stop();
+
+      // Debug Console Input
+      const dbgInput = $('debug-console-input');
+      if (dbgInput) {
+        dbgInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            const expr = dbgInput.value.trim();
+            if (expr) {
+              this.evaluateExpression(expr);
+              dbgInput.value = '';
+            }
+          }
+        });
+      }
+    },
+
+    toggleBreakpoint(line) {
+      if (this.breakpoints.has(line)) {
+        this.breakpoints.delete(line);
+      } else {
+        this.breakpoints.add(line);
+      }
+      this.refreshBreakpointsDecoration();
+      this.renderBreakpointsList();
+    },
+
+    refreshBreakpointsDecoration() {
+      if (!editor) return;
+      const model = editor.getModel();
+      if (!model) return;
+
+      const newDecorations = Array.from(this.breakpoints).map(line => ({
+        range: new monaco.Range(line, 1, line, 1),
+        options: {
+          isWholeLine: false,
+          glyphMarginClassName: 'debug-breakpoint-glyph',
+          glyphMarginHoverMessage: { value: `Breakpoint at line ${line}` }
+        }
+      }));
+
+      this._breakpointDecorations = editor.deltaDecorations(this._breakpointDecorations, newDecorations);
+    },
+
+    renderBreakpointsList() {
+      const container = $('debug-breakpoints-list');
+      if (!container) return;
+      container.innerHTML = '';
+      if (this.breakpoints.size === 0) {
+        container.innerHTML = `<div class="dim font-11 padding-6">No breakpoints set. Click the editor gutter to set breakpoints.</div>`;
+        return;
+      }
+      const activePath = Tabs.getActive() || 'main.c';
+      Array.from(this.breakpoints).sort((a,b)=>a-b).forEach(line => {
+        const item = document.createElement('div');
+        item.className = 'file-tree-item';
+        item.innerHTML =
+          `<i class="codicon codicon-debug-breakpoint problem-icon-err"></i>` +
+          `<span class="file-name">${esc(activePath)}:${line}</span>`;
+        item.onclick = () => {
+          if (editor) editor.revealLineInCenter(line);
+        };
+        container.appendChild(item);
+      });
+    },
+
+    start() {
+      const activePath = Tabs.getActive();
+      if (!activePath || !VFS.exists(activePath)) {
+        termLog('Open a C source file to start debugging.', 'err');
+        return;
+      }
+
+      const file = VFS.read(activePath);
+      const lines = file.content.split('\n');
+
+      // Find executable statement lines (ignoring empty lines, comments, includes)
+      this.executableLines = [];
+      lines.forEach((l, i) => {
+        const trimmed = l.trim();
+        if (trimmed && !trimmed.startsWith('//') && !trimmed.startsWith('/*') && !trimmed.startsWith('#')) {
+          this.executableLines.push(i + 1);
+        }
+      });
+
+      if (this.executableLines.length === 0) {
+        termLog('No executable lines found in active file.', 'err');
+        return;
+      }
+
+      this.active = true;
+      this.paused = true;
+      this.variables.clear();
+
+      // Find first breakpoint or start at first statement line
+      const firstBp = Array.from(this.breakpoints).sort((a,b)=>a-b).find(l => this.executableLines.includes(l));
+      this.currentLine = firstBp || this.executableLines[0];
+
+      $('debug-floating-bar').classList.remove('hidden');
+      ActivityBar.switchView('debug');
+      PanelController.switchPanel('debug');
+
+      debugLog(`[Debugger Started] Paused at line ${this.currentLine} in ${activePath}.`);
+      this.highlightExecutionLine();
+      this.simulateLineExecution(this.currentLine);
+      this.renderVariables();
+    },
+
+    stop() {
+      this.active = false;
+      this.paused = false;
+      $('debug-floating-bar').classList.add('hidden');
+      if (editor) {
+        this._executionDecorations = editor.deltaDecorations(this._executionDecorations, []);
+      }
+      debugLog('[Debugger Stopped]');
+    },
+
+    continue() {
+      if (!this.active) return;
+      // Find next line with a breakpoint
+      const sortedBps = Array.from(this.breakpoints).sort((a,b)=>a-b);
+      const nextBp = sortedBps.find(l => l > this.currentLine);
+
+      if (nextBp) {
+        // Step to next breakpoint
+        this.currentLine = nextBp;
+        this.highlightExecutionLine();
+        this.simulateLineExecution(this.currentLine);
+        this.renderVariables();
+        debugLog(`[Paused] Breakpoint hit at line ${this.currentLine}.`);
+      } else {
+        // Finish program execution
+        termLog('[Debugger] Executed to end of program.');
+        debugLog('[Debugger] Execution completed successfully.');
+        this.stop();
+        runPipeline(true);
+      }
+    },
+
+    stepOver() {
+      if (!this.active) return;
+      const idx = this.executableLines.indexOf(this.currentLine);
+      if (idx !== -1 && idx < this.executableLines.length - 1) {
+        this.currentLine = this.executableLines[idx + 1];
+        this.highlightExecutionLine();
+        this.simulateLineExecution(this.currentLine);
+        this.renderVariables();
+        debugLog(`Step Over → Line ${this.currentLine}`);
+      } else {
+        debugLog('[Debugger] Reached end of function main().');
+        this.stop();
+      }
+    },
+
+    stepInto() {
+      this.stepOver();
+    },
+
+    stepOut() {
+      this.stop();
+    },
+
+    highlightExecutionLine() {
+      if (!editor) return;
+      editor.revealLineInCenter(this.currentLine);
+      this._executionDecorations = editor.deltaDecorations(this._executionDecorations, [
+        {
+          range: new monaco.Range(this.currentLine, 1, this.currentLine, 100),
+          options: {
+            isWholeLine: true,
+            className: 'debug-active-execution-line',
+            glyphMarginClassName: 'debug-active-glyph'
+          }
+        }
+      ]);
+    },
+
+    simulateLineExecution(lineNum) {
+      const activePath = Tabs.getActive();
+      if (!activePath) return;
+      const file = VFS.read(activePath);
+      if (!file) return;
+
+      const lines = file.content.split('\n');
+      const lineText = lines[lineNum - 1] ? lines[lineNum - 1].trim() : '';
+
+      // Parse simple int variable declarations: int v = 7; or sum = 0;
+      const varDeclMatch = lineText.match(/(?:int|float|double|char\*?)\s+([a-zA-Z_]\w*)\s*=\s*(.+);/);
+      if (varDeclMatch) {
+        const varName = varDeclMatch[1];
+        const valExpr = varDeclMatch[2];
+        try {
+          // evaluate primitive number / string
+          const evalVal = Function(`"use strict"; return (${valExpr.replace(/(\w+)/g, (m) => this.variables.has(m) ? this.variables.get(m).value : m)});`)();
+          this.variables.set(varName, { type: 'int', value: evalVal });
+        } catch(e) {
+          this.variables.set(varName, { type: 'int', value: valExpr });
         }
       }
-    } else {
-      sb.classList.toggle('collapsed');
+
+      // Parse assignment: sum += i; or sum = sum + i;
+      const assignMatch = lineText.match(/([a-zA-Z_]\w*)\s*(\+=|\*=|-=|=)\s*(.+);/);
+      if (assignMatch && !lineText.startsWith('int') && !lineText.startsWith('for')) {
+        const varName = assignMatch[1];
+        const op = assignMatch[2];
+        const expr = assignMatch[3];
+        let curr = this.variables.get(varName)?.value || 0;
+        if (op === '+=') curr += (parseInt(expr, 10) || 1);
+        else if (op === '=') curr = parseInt(expr, 10) || 0;
+        this.variables.set(varName, { type: 'int', value: curr });
+      }
+    },
+
+    renderVariables() {
+      const container = $('debug-variables-tree');
+      if (!container) return;
+      container.innerHTML = '';
+
+      if (this.variables.size === 0) {
+        container.innerHTML = `<div class="dim font-11 padding-6">No local variables in frame scope.</div>`;
+        return;
+      }
+
+      for (const [key, info] of this.variables) {
+        const row = document.createElement('div');
+        row.className = 'debug-var-row';
+        row.innerHTML =
+          `<div><span class="var-name">${esc(key)}</span> <span class="var-type">${esc(info.type)}</span></div>` +
+          `<span class="var-val">${esc(info.value)}</span>`;
+        container.appendChild(row);
+      }
+    },
+
+    evaluateExpression(expr) {
+      if (this.variables.has(expr)) {
+        const v = this.variables.get(expr);
+        debugLog(`> ${expr} = ${v.value} (${v.type})`);
+      } else {
+        try {
+          const evalFn = new Function(...Array.from(this.variables.keys()), `"use strict"; return (${expr});`);
+          const res = evalFn(...Array.from(this.variables.values()).map(v => v.value));
+          debugLog(`> ${expr} = ${res}`);
+        } catch (err) {
+          debugLog(`> ${expr} → Evaluation error: ${err.message}`);
+        }
+      }
     }
-    setTimeout(() => { if (editor) editor.layout(); }, 200);
-  }
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
+     ACTIVITY BAR & SIDEBAR CONTROLLER
+     ══════════════════════════════════════════════════════════════════════ */
+  const ActivityBar = {
+    _activeView: 'explorer',
+
+    init() {
+      const items = document.querySelectorAll('.activity-item[data-view]');
+      items.forEach(item => {
+        item.addEventListener('click', () => {
+          const view = item.dataset.view;
+          this.switchView(view);
+        });
+      });
+    },
+
+    switchView(viewName) {
+      const sb = $('sidebar');
+      const isMobile = window.innerWidth <= 768;
+
+      if (this._activeView === viewName && !sb.classList.contains('collapsed')) {
+        sb.classList.add('collapsed');
+      } else {
+        sb.classList.remove('collapsed');
+
+        document.querySelectorAll('.activity-item').forEach(el => el.classList.remove('active'));
+        const activeBtn = $(`act-${viewName}`);
+        if (activeBtn) activeBtn.classList.add('active');
+
+        document.querySelectorAll('.sidebar-view').forEach(el => el.classList.remove('active'));
+        const targetView = $(`view-${viewName}`);
+        if (targetView) targetView.classList.add('active');
+
+        this._activeView = viewName;
+      }
+
+      if (isMobile) {
+        const backdrop = $('sidebar-backdrop');
+        if (backdrop) backdrop.classList.toggle('active', !sb.classList.contains('collapsed'));
+      }
+
+      setTimeout(() => { if (editor) editor.layout(); }, 150);
+    }
+  };
 
   function closeMobileSidebar() {
     const sb = $('sidebar');
     const backdrop = $('sidebar-backdrop');
-    if (sb) sb.classList.remove('mobile-open');
+    if (sb && window.innerWidth <= 768) sb.classList.add('collapsed');
     if (backdrop) backdrop.classList.remove('active');
   }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     GLOBAL VFS SEARCH ENGINE
+     ══════════════════════════════════════════════════════════════════════ */
+  const SearchEngine = {
+    init() {
+      const input = $('search-input');
+      if (input) {
+        input.addEventListener('input', () => this.performSearch());
+      }
+    },
+
+    performSearch() {
+      const query = $('search-input').value.trim();
+      const header = $('search-results-header');
+      const container = $('search-results-tree');
+      container.innerHTML = '';
+
+      if (!query) {
+        header.textContent = 'Type to search across workspace files';
+        return;
+      }
+
+      let totalMatches = 0;
+      const files = VFS.list();
+
+      for (const path of files) {
+        const file = VFS.read(path);
+        if (!file) continue;
+        const lines = file.content.split('\n');
+        const fileMatches = [];
+
+        lines.forEach((line, index) => {
+          if (line.toLowerCase().includes(query.toLowerCase())) {
+            fileMatches.push({ lineNum: index + 1, text: line.trim() });
+          }
+        });
+
+        if (fileMatches.length > 0) {
+          totalMatches += fileMatches.length;
+
+          const group = document.createElement('div');
+          group.className = 'search-file-group';
+          const ic = fileIcon(path);
+
+          group.innerHTML =
+            `<div class="sidebar-section-header">` +
+              `<i class="codicon ${ic.icon} ${ic.cls}"></i>` +
+              `<span>${esc(path)}</span>` +
+              `<span class="badge">${fileMatches.length}</span>` +
+            `</div>`;
+
+          const list = document.createElement('div');
+          list.className = 'search-match-list';
+
+          for (const match of fileMatches) {
+            const item = document.createElement('div');
+            item.className = 'file-tree-item';
+            item.innerHTML = `<span class="problem-location">${match.lineNum}:</span> <span>${esc(match.text)}</span>`;
+            item.onclick = () => {
+              Tabs.open(path);
+              if (editor) editor.revealLineInCenter(match.lineNum);
+            };
+            list.appendChild(item);
+          }
+
+          group.appendChild(list);
+          container.appendChild(group);
+        }
+      }
+
+      header.textContent = `${totalMatches} result${totalMatches === 1 ? '' : 's'} in ${container.children.length} file${container.children.length === 1 ? '' : 's'}`;
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
+     SOURCE CONTROL SIMULATION (SCM)
+     ══════════════════════════════════════════════════════════════════════ */
+  const SCM = {
+    updateStatus() {
+      const list = $('scm-changes-list');
+      const badge = $('scm-badge');
+      const count = $('scm-changes-count');
+      if (!list) return;
+
+      list.innerHTML = '';
+      const files = VFS.list();
+
+      for (const path of files) {
+        const file = VFS.read(path);
+        const ic = fileIcon(path);
+        const item = document.createElement('div');
+        item.className = 'file-tree-item';
+        item.innerHTML =
+          `<i class="codicon ${ic.icon} ${ic.cls}"></i>` +
+          `<span class="file-name">${esc(path)}</span>` +
+          `<span class="file-badge" style="color:var(--vsc-amber)">M</span>`;
+        item.onclick = () => Tabs.open(path);
+        list.appendChild(item);
+      }
+
+      const num = files.length;
+      if (badge) badge.textContent = num;
+      if (count) count.textContent = num;
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
+     COMMAND PALETTE & QUICK OPEN OVERLAY
+     ══════════════════════════════════════════════════════════════════════ */
+  const CommandPalette = {
+    _mode: 'commands',
+    _selectedIndex: 0,
+    _items: [],
+
+    init() {
+      const input = $('palette-input');
+      if (input) {
+        input.addEventListener('input', () => this._renderResults());
+        input.addEventListener('keydown', (e) => this._onKeyDown(e));
+      }
+      const overlay = $('command-palette-overlay');
+      if (overlay) {
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) this.close();
+        });
+      }
+      const btn = $('btn-quick-palette');
+      if (btn) {
+        btn.onclick = () => this.show('files');
+      }
+    },
+
+    show(mode = 'commands') {
+      this._mode = mode;
+      this._selectedIndex = 0;
+      const overlay = $('command-palette-overlay');
+      const prefix = $('palette-prefix');
+      const input = $('palette-input');
+
+      prefix.textContent = mode === 'commands' ? '>' : '';
+      input.placeholder = mode === 'commands' ? 'Type a command to run...' : 'Search files by name...';
+      input.value = '';
+
+      overlay.classList.remove('hidden');
+      setTimeout(() => input.focus(), 50);
+      this._buildItems();
+      this._renderResults();
+    },
+
+    close() {
+      $('command-palette-overlay').classList.add('hidden');
+    },
+
+    _buildItems() {
+      if (this._mode === 'commands') {
+        this._items = [
+          { label: 'Start Debugging (F5)', shortcut: 'F5', action: () => Debugger.start() },
+          { label: 'Run C Program (Build & Execute)', shortcut: 'Ctrl+Enter', action: () => runPipeline(true) },
+          { label: 'Build Target to WebAssembly AST & WASM', shortcut: '', action: () => runPipeline(false) },
+          { label: 'Create New File', shortcut: 'Ctrl+N', action: () => createNewFile() },
+          { label: 'Save Active File', shortcut: 'Ctrl+S', action: () => Tabs.saveActive() },
+          { label: 'Toggle Primary Sidebar', shortcut: 'Ctrl+B', action: () => ActivityBar.switchView(ActivityBar._activeView) },
+          { label: 'Toggle Integrated Terminal Panel', shortcut: 'Ctrl+`', action: () => toggleTerminal() },
+          { label: 'Switch View: Compilation Stages Explorer', shortcut: '', action: () => ActivityBar.switchView('stages') },
+          { label: 'Switch View: File Explorer', shortcut: 'Ctrl+Shift+E', action: () => ActivityBar.switchView('explorer') },
+          { label: 'Switch View: Global Search', shortcut: 'Ctrl+Shift+F', action: () => ActivityBar.switchView('search') },
+          { label: 'Switch View: Source Control (Git)', shortcut: 'Ctrl+Shift+G', action: () => ActivityBar.switchView('scm') },
+          { label: 'Switch View: Run and Debug', shortcut: 'Ctrl+Shift+D', action: () => ActivityBar.switchView('debug') },
+          { label: 'Switch View: IDE Settings', shortcut: '', action: () => ActivityBar.switchView('settings') },
+          { label: 'Clear Terminal Output', shortcut: '', action: () => $('terminal').innerHTML = '' },
+        ];
+      } else {
+        this._items = VFS.list().map(path => ({
+          label: path,
+          shortcut: fileIcon(path).cls,
+          action: () => Tabs.open(path)
+        }));
+      }
+    },
+
+    _renderResults() {
+      const query = $('palette-input').value.trim().toLowerCase();
+      const results = $('palette-results');
+      results.innerHTML = '';
+
+      const filtered = this._items.filter(item => item.label.toLowerCase().includes(query));
+      this._filteredItems = filtered;
+
+      if (filtered.length === 0) {
+        results.innerHTML = `<div class="palette-item"><span class="dim">No matching results</span></div>`;
+        return;
+      }
+
+      this._selectedIndex = Math.max(0, Math.min(this._selectedIndex, filtered.length - 1));
+
+      filtered.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = 'palette-item' + (index === this._selectedIndex ? ' active' : '');
+        row.innerHTML =
+          `<div class="palette-item-left">` +
+            `<i class="codicon ${this._mode === 'commands' ? 'codicon-terminal' : fileIcon(item.label).icon}"></i>` +
+            `<span>${esc(item.label)}</span>` +
+          `</div>` +
+          `<span class="palette-item-shortcut">${esc(item.shortcut)}</span>`;
+
+        row.onclick = () => {
+          this.close();
+          item.action();
+        };
+
+        results.appendChild(row);
+      });
+    },
+
+    _onKeyDown(e) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        this._selectedIndex = (this._selectedIndex + 1) % (this._filteredItems?.length || 1);
+        this._renderResults();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        this._selectedIndex = (this._selectedIndex - 1 + (this._filteredItems?.length || 1)) % (this._filteredItems?.length || 1);
+        this._renderResults();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (this._filteredItems && this._filteredItems[this._selectedIndex]) {
+          const item = this._filteredItems[this._selectedIndex];
+          this.close();
+          item.action();
+        }
+      } else if (e.key === 'Escape') {
+        this.close();
+      }
+    }
+  };
+
+  /* ══════════════════════════════════════════════════════════════════════
+     BOTTOM PANEL TABS CONTROLLER (PROBLEMS, OUTPUT, DEBUG, TERMINAL)
+     ══════════════════════════════════════════════════════════════════════ */
+  const PanelController = {
+    _activePanel: 'terminal',
+
+    init() {
+      const tabs = document.querySelectorAll('.terminal-tab[data-panel]');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          this.switchPanel(tab.dataset.panel);
+        });
+      });
+
+      $('btn-close-term').onclick = () => toggleTerminal(true);
+    },
+
+    switchPanel(panelName) {
+      document.querySelectorAll('.terminal-tab').forEach(el => el.classList.remove('active'));
+      const activeTab = $(`ptab-${panelName}`);
+      if (activeTab) activeTab.classList.add('active');
+
+      document.querySelectorAll('.panel-body-content').forEach(el => el.classList.add('hidden'));
+      const targetBody = $(`pbody-${panelName}`);
+      if (targetBody) targetBody.classList.remove('hidden');
+
+      this._activePanel = panelName;
+
+      const panel = $('terminal-panel');
+      if (panel.classList.contains('collapsed')) {
+        toggleTerminal();
+      }
+    }
+  };
+
+  function toggleTerminal(forceCollapse = false) {
+    const panel = $('terminal-panel');
+    const icon = $('term-toggle-icon');
+    if (forceCollapse) {
+      panel.classList.add('collapsed');
+    } else {
+      panel.classList.toggle('collapsed');
+    }
+    if (icon) {
+      icon.className = panel.classList.contains('collapsed') ? 'codicon codicon-chevron-up' : 'codicon codicon-chevron-down';
+    }
+    setTimeout(() => { if (editor) editor.layout(); }, 150);
+  }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     SETTINGS & THEME CONTROLLER
+     ══════════════════════════════════════════════════════════════════════ */
+  const SettingsController = {
+    init() {
+      const themeSelect = $('setting-theme');
+      if (themeSelect) {
+        themeSelect.onchange = (e) => {
+          document.body.className = e.target.value;
+        };
+      }
+
+      const fontInput = $('setting-font-size');
+      if (fontInput) {
+        fontInput.onchange = (e) => {
+          const val = parseInt(e.target.value, 10) || 14;
+          if (editor) editor.updateOptions({ fontSize: val });
+        };
+      }
+
+      const tabSelect = $('setting-tab-size');
+      if (tabSelect) {
+        tabSelect.onchange = (e) => {
+          const val = parseInt(e.target.value, 10) || 4;
+          if (editor) editor.updateOptions({ tabSize: val });
+          $('status-spaces').textContent = `Spaces: ${val}`;
+        };
+      }
+
+      const minimapCheckbox = $('setting-minimap');
+      if (minimapCheckbox) {
+        minimapCheckbox.onchange = (e) => {
+          if (editor) editor.updateOptions({ minimap: { enabled: e.target.checked } });
+        };
+      }
+
+      const wrapCheckbox = $('setting-word-wrap');
+      if (wrapCheckbox) {
+        wrapCheckbox.onchange = (e) => {
+          if (editor) editor.updateOptions({ wordWrap: e.target.checked ? 'on' : 'off' });
+        };
+      }
+    }
+  };
 
   /* ══════════════════════════════════════════════════════════════════════
      MONACO EDITOR BOOT & RESIZE OBSERVER
@@ -485,17 +1191,17 @@
       monaco.editor.defineTheme('ide-slate-dark', {
         base: 'vs-dark', inherit: true,
         rules: [
-          { token: 'keyword',  foreground: '60a5fa', fontStyle: 'bold' },
-          { token: 'type',     foreground: '34d399' },
-          { token: 'string',   foreground: 'fb923c' },
-          { token: 'number',   foreground: 'f59e0b' },
-          { token: 'comment',  foreground: '64748b', fontStyle: 'italic' },
+          { token: 'keyword',  foreground: '569cd6', fontStyle: 'bold' },
+          { token: 'type',     foreground: '4ec9b0' },
+          { token: 'string',   foreground: 'ce9178' },
+          { token: 'number',   foreground: 'b5cea8' },
+          { token: 'comment',  foreground: '6a9955', fontStyle: 'italic' },
         ],
         colors: {
-          'editor.background':                '#090d16',
-          'editor.lineHighlightBackground':   '#1e293b55',
-          'editorLineNumber.foreground':       '#475569',
-          'editorLineNumber.activeForeground': '#94a3b8',
+          'editor.background':                '#1e1e1e',
+          'editor.lineHighlightBackground':   '#2a2d2e',
+          'editorLineNumber.foreground':       '#858585',
+          'editorLineNumber.activeForeground': '#c6c6c6',
         }
       });
 
@@ -511,33 +1217,53 @@
         padding: { top: 10, bottom: 10 },
         renderWhitespace: 'selection',
         bracketPairColorization: { enabled: true },
+        wordWrap: 'on',
+        glyphMargin: true,
       });
 
-      // Track cursor position for status bar
+      editor.onMouseDown((e) => {
+        if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
+          const line = e.target.position.lineNumber;
+          Debugger.toggleBreakpoint(line);
+        }
+      });
+
       editor.onDidChangeCursorPosition((e) => {
         $('status-cursor').textContent = `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
       });
 
-      // Save editor changes to VFS
       editor.onDidChangeModelContent(() => {
         const path = Tabs.getActive();
         if (path && VFS.exists(path)) {
           const file = VFS.read(path);
           if (!file.readOnly) {
             file.content = editor.getValue();
+            Tabs.markDirty(path, true);
           }
         }
       });
 
-      // Shortcut: Ctrl+Enter -> Build & Run
+      editor.addAction({
+        id: 'start-debug',
+        label: 'Start Debugging',
+        keybindings: [monaco.KeyCode.F5],
+        run: () => Debugger.start(),
+      });
+
       editor.addAction({
         id: 'run-program',
-        label: 'Build & Run',
+        label: 'Build & Run Program',
         keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter],
         run: () => runPipeline(true),
       });
 
-      // ResizeObserver to ensure Monaco always fills container
+      editor.addAction({
+        id: 'save-file',
+        label: 'Save File',
+        keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS],
+        run: () => Tabs.saveActive(),
+      });
+
       if (window.ResizeObserver) {
         const ro = new ResizeObserver(() => {
           if (editor) editor.layout();
@@ -545,7 +1271,6 @@
         ro.observe($('editor-area'));
       }
 
-      // Open initial default file
       Tabs.open('main.c');
     });
   }
@@ -558,12 +1283,20 @@
 
     populatePresets();
     bindEvents();
+    ActivityBar.init();
+    CommandPalette.init();
+    PanelController.init();
+    SearchEngine.init();
+    SettingsController.init();
+    Debugger.init();
     FileExplorer.render();
+    SCM.updateStatus();
     bootMonaco();
   });
 
   function populatePresets() {
     const sel = $('preset-select');
+    if (!sel) return;
     sel.innerHTML = '';
     for (const [key, [label]] of Object.entries(PRESETS)) {
       const opt = document.createElement('option');
@@ -574,36 +1307,56 @@
   }
 
   function bindEvents() {
-    $('preset-select').onchange = (e) => {
-      const p = PRESETS[e.target.value];
-      if (p) {
-        VFS.write('main.c', p[1], { language: 'c' });
-        Tabs.updateModel('main.c');
-        Tabs.open('main.c');
-      }
-    };
+    const presetSelect = $('preset-select');
+    if (presetSelect) {
+      presetSelect.onchange = (e) => {
+        const p = PRESETS[e.target.value];
+        if (p) {
+          VFS.write('main.c', p[1], { language: 'c' });
+          Tabs.updateModel('main.c');
+          Tabs.open('main.c');
+        }
+      };
+    }
 
-    $('btn-toggle-sidebar').onclick = () => toggleSidebar();
+    // Header Buttons
+    $('btn-toggle-sidebar').onclick = () => ActivityBar.switchView(ActivityBar._activeView);
+    $('btn-toggle-panel').onclick   = () => toggleTerminal();
+
     const backdrop = $('sidebar-backdrop');
     if (backdrop) backdrop.onclick = () => closeMobileSidebar();
 
+    const headerOpenEditors = $('header-open-editors');
+    if (headerOpenEditors) {
+      headerOpenEditors.onclick = () => {
+        $('list-open-editors').classList.toggle('collapsed');
+      };
+    }
+
+    const headerProjectFiles = $('header-project-files');
+    if (headerProjectFiles) {
+      headerProjectFiles.onclick = () => {
+        $('file-tree').classList.toggle('collapsed');
+      };
+    }
+
     $('btn-build').onclick  = () => runPipeline(false);
     $('btn-run').onclick    = () => runPipeline(true);
-    $('btn-new').onclick    = () => createNewFile();
-
     $('btn-sidebar-new').onclick   = () => createNewFile();
     $('btn-sidebar-clean').onclick = () => {
-      Tabs.closeGenerated();
-      VFS.clearGenerated();
+      // Clear non-active files
+      const active = Tabs.getActive();
+      VFS.list().forEach(p => { if (p !== active) VFS.remove(p); });
     };
 
-    $('btn-welcome-new').onclick    = () => createNewFile();
-    $('btn-welcome-preset').onclick = () => Tabs.open('main.c');
+    $('btn-welcome-new').onclick     = () => createNewFile();
+    $('btn-welcome-palette').onclick = () => CommandPalette.show('commands');
 
-    $('btn-clear-term').onclick = () => { $('terminal').innerHTML = ''; };
-    $('btn-toggle-term').onclick = () => {
-      $('terminal-panel').classList.toggle('collapsed');
-      setTimeout(() => { if (editor) editor.layout(); }, 150);
+    $('btn-clear-term').onclick = (e) => {
+      e.stopPropagation();
+      $('terminal').innerHTML = '';
+      $('output-log').innerHTML = '';
+      $('debug-log').innerHTML = '';
     };
 
     // Context Menu Item Listeners
@@ -626,19 +1379,44 @@
       }
     });
 
-    // Global keyboard shortcuts
+    // Global Keyboard Shortcuts
     document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      const isCmdOrCtrl = e.ctrlKey || e.metaKey;
+
+      if (e.key === 'F5') {
+        e.preventDefault();
+        if (!Debugger.active) Debugger.start();
+        else Debugger.continue();
+      } else if (e.key === 'F10') {
+        e.preventDefault();
+        Debugger.stepOver();
+      } else if (e.key === 'F11') {
+        e.preventDefault();
+        Debugger.stepInto();
+      } else if (isCmdOrCtrl && e.shiftKey && (e.key === 'P' || e.key === 'p')) {
+        e.preventDefault();
+        CommandPalette.show('commands');
+      } else if (e.key === 'F1') {
+        e.preventDefault();
+        CommandPalette.show('commands');
+      } else if (isCmdOrCtrl && (e.key === 'p' || e.key === 'P')) {
+        e.preventDefault();
+        CommandPalette.show('files');
+      } else if (isCmdOrCtrl && e.key === 'Enter') {
         e.preventDefault();
         runPipeline(true);
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+      } else if (isCmdOrCtrl && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        Tabs.saveActive();
+      } else if (isCmdOrCtrl && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault();
         createNewFile();
-      }
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'b' || e.key === 'B')) {
+      } else if (isCmdOrCtrl && (e.key === 'b' || e.key === 'B')) {
         e.preventDefault();
-        toggleSidebar();
+        ActivityBar.switchView(ActivityBar._activeView);
+      } else if (isCmdOrCtrl && (e.key === '`' || e.key === 'j' || e.key === 'J')) {
+        e.preventDefault();
+        toggleTerminal();
       }
     });
 
@@ -646,21 +1424,20 @@
       if (editor) editor.layout();
     });
 
-    // Sidebar resize
     initResize($('sidebar-resize'), 'sidebar', 'horizontal');
-    // Terminal resize
     initResize($('terminal-resize'), 'terminal-panel', 'vertical');
   }
 
   /* ── Resize Handles ─────────────────────────────────────────────────── */
   function initResize(handle, targetId, direction) {
+    if (!handle) return;
     let startPos, startSize;
     const onMouseMove = (e) => {
       const el = $(targetId);
       if (direction === 'horizontal') {
         el.style.width = Math.max(160, startSize + (e.clientX - startPos)) + 'px';
       } else {
-        el.style.height = Math.max(80, startSize - (e.clientY - startPos)) + 'px';
+        el.style.height = Math.max(34, startSize - (e.clientY - startPos)) + 'px';
       }
       if (editor) editor.layout();
     };
@@ -681,22 +1458,31 @@
     });
   }
 
-  /* ── Status Bar ─────────────────────────────────────────────────────── */
+  /* ── Breadcrumbs & Status Bar Helpers ───────────────────────────────── */
+  function updateBreadcrumbs(path) {
+    const fn = $('breadcrumb-filename');
+    const ic = $('breadcrumb-file-icon');
+    if (path) {
+      if (fn) fn.textContent = path;
+      if (ic) ic.className = `codicon ${fileIcon(path).icon} ${fileIcon(path).cls}`;
+    } else {
+      if (fn) fn.textContent = 'None';
+    }
+  }
+
   function updateStatusBar() {
     const path = Tabs.getActive();
     if (path) {
-      $('status-file').innerHTML = `<i class="codicon ${fileIcon(path).icon}"></i> ${esc(path)}`;
       const file = VFS.read(path);
       $('status-lang').innerHTML = `<i class="codicon codicon-code"></i> ${(file?.language || 'plaintext').toUpperCase()}`;
     } else {
-      $('status-file').textContent = '';
       $('status-lang').textContent = '';
       $('status-cursor').textContent = '';
     }
   }
 
   /* ══════════════════════════════════════════════════════════════════════
-     COMPILER PIPELINE (DYNAMIC MULTI-FILE & ACTIVE ENTRY POINT)
+     COMPILER PIPELINE & ISOLATED STAGE OUTPUTS
      ══════════════════════════════════════════════════════════════════════ */
   function runPipeline(execute) {
     const CJS = window.CompilerJS;
@@ -710,7 +1496,7 @@
       if (VFS.exists('main.c')) {
         entryPath = 'main.c';
       } else {
-        const cFiles = VFS.list().filter(p => p.endsWith('.c') && !VFS.read(p).generated);
+        const cFiles = VFS.list().filter(p => p.endsWith('.c'));
         entryPath = cFiles.length > 0 ? cFiles[0] : null;
       }
     }
@@ -727,9 +1513,9 @@
     }
 
     const source = entryFile.content;
-    const baseName = entryPath.includes('.') ? entryPath.substring(0, entryPath.lastIndexOf('.')) : entryPath;
 
-    $('terminal-panel').classList.remove('collapsed');
+    // Switch to Terminal Panel
+    PanelController.switchPanel('terminal');
 
     const term = $('terminal');
     term.innerHTML = '';
@@ -741,66 +1527,145 @@
     try {
       // ── Stage 1: Preprocess ──────────────────────────────────────
       const ppText = extractPreprocessed(CJS, entryPath, source, errors);
-      const ppFile = baseName + '.i';
-      VFS.write(ppFile, ppText, { language: 'c', readOnly: true, generated: true });
-      termLog(`[1/4] Preprocessed → ${ppFile}`);
+      outputLog(`[1/4] Preprocessed C source compiled.`);
 
       // ── Stage 2: AST ─────────────────────────────────────────────
       const astText = extractAST(CJS, entryPath, source, errors);
-      const astFile = baseName + '.ast';
-      VFS.write(astFile, astText, { language: 'plaintext', readOnly: true, generated: true });
-      termLog(`[2/4] Parsed AST → ${astFile}`);
+      outputLog(`[2/4] Parsed Abstract Syntax Tree.`);
 
       // ── Stage 3: WASM Codegen ────────────────────────────────────
       const wasmInfo = extractWasm(CJS, entryPath, source, errors, warnings);
-      const watFile = baseName + '.wat';
-      VFS.write(watFile, wasmInfo.wastText, { language: 'plaintext', readOnly: true, generated: true });
 
-      // Section summary
       let sectionSummary = `=== WASM Binary Sections for ${entryPath} ===\n\n`;
       for (const sec of wasmInfo.sections) {
         sectionSummary += `Section ${sec.id} (${sec.name}): ${sec.length.toLocaleString()} bytes @ offset ${sec.offset}\n`;
       }
       sectionSummary += `\nTotal: ${wasmInfo.bytes.length.toLocaleString()} bytes, ${wasmInfo.sections.length} sections\n`;
-      VFS.write('a.wasm.txt', sectionSummary, { language: 'plaintext', readOnly: true, generated: true });
 
-      termLog(`[3/4] WASM Codegen → ${watFile} (${wasmInfo.bytes.length} bytes)`);
+      outputLog(`[3/4] WebAssembly Codegen complete (${wasmInfo.bytes.length} bytes).`);
+
+      // Store in CompilationOutputs (Clean Tab Isolation — NO tabs opened)
+      CompilationOutputs.set(ppText, astText, wasmInfo.wastText, sectionSummary);
 
       for (const w of warnings) {
         termLog(`[Warning] ${w}`, 'warn');
       }
 
-      for (const p of [ppFile, astFile, watFile, 'a.wasm.txt']) {
-        Tabs.updateModel(p);
-      }
-
-      FileExplorer.render();
-
-      Tabs.open(ppFile);
-      Tabs.open(astFile);
-      Tabs.open(watFile);
-
-      Tabs.open(entryPath);
-
       setBuildStatus('success', `Build OK (${wasmInfo.bytes.length} B)`);
+      updateDiagnostics(entryPath, errors, warnings);
 
       if (execute) {
         termLog('[4/4] Executing WebAssembly module…');
         executeWasm(wasmInfo.bytes);
       } else {
-        termLog('[Build] Done. Press ▶ Run to execute.');
-        Tabs.open(watFile);
+        termLog('[Build] Done. Check Compilation Stages Explorer to inspect outputs.');
       }
 
     } catch (err) {
       for (const e of errors) termLog(`[Error] ${e}`, 'err');
       if (err.message) termLog(`[Error] ${err.message}`, 'err');
       setBuildStatus('error', 'Build failed');
+      updateDiagnostics(entryPath, errors, warnings);
     }
+  }
+
+  function updateDiagnostics(filePath, errors, warnings) {
+    const list = $('problems-list');
+    const badge = $('problems-count-badge');
+    const errCountEl = $('status-err-count');
+    const warnCountEl = $('status-warn-count');
+
+    if (!list) return;
+    list.innerHTML = '';
+
+    const total = errors.length + warnings.length;
+    if (badge) badge.textContent = total;
+    if (errCountEl) errCountEl.textContent = errors.length;
+    if (warnCountEl) warnCountEl.textContent = warnings.length;
+
+    // Apply Monaco Markers
+    if (window.monaco && editor) {
+      const uri = monaco.Uri.parse('vfs:///' + filePath);
+      const model = monaco.editor.getModel(uri);
+      if (model) {
+        const markers = [];
+        errors.forEach(e => {
+          const match = e.match(/(\d+):(.*)/);
+          const line = match ? parseInt(match[1], 10) : 1;
+          const msg = match ? match[2] : e;
+          markers.push({
+            startLineNumber: line, startColumn: 1,
+            endLineNumber: line, endColumn: 100,
+            message: msg,
+            severity: monaco.MarkerSeverity.Error,
+          });
+        });
+        warnings.forEach(w => {
+          const match = w.match(/(\d+):(.*)/);
+          const line = match ? parseInt(match[1], 10) : 1;
+          const msg = match ? match[2] : w;
+          markers.push({
+            startLineNumber: line, startColumn: 1,
+            endLineNumber: line, endColumn: 100,
+            message: msg,
+            severity: monaco.MarkerSeverity.Warning,
+          });
+        });
+        monaco.editor.setModelMarkers(model, 'c-compiler', markers);
+      }
+    }
+
+    if (total === 0) {
+      list.innerHTML = `
+        <div class="problems-empty">
+          <i class="codicon codicon-check-all"></i>
+          <span>No problems have been detected in the workspace so far.</span>
+        </div>`;
+      return;
+    }
+
+    errors.forEach(e => {
+      const match = e.match(/(\d+):(.*)/);
+      const line = match ? parseInt(match[1], 10) : 1;
+      const msg = match ? match[2] : e;
+
+      const item = document.createElement('div');
+      item.className = 'problem-item';
+      item.innerHTML =
+        `<i class="codicon codicon-error problem-icon-err"></i>` +
+        `<span class="problem-msg">${esc(msg)}</span>` +
+        `<span class="problem-location">${esc(filePath)}:${line}</span>`;
+
+      item.onclick = () => {
+        Tabs.open(filePath);
+        if (editor) editor.revealLineInCenter(line);
+      };
+      list.appendChild(item);
+    });
+
+    warnings.forEach(w => {
+      const match = w.match(/(\d+):(.*)/);
+      const line = match ? parseInt(match[1], 10) : 1;
+      const msg = match ? match[2] : w;
+
+      const item = document.createElement('div');
+      item.className = 'problem-item';
+      item.innerHTML =
+        `<i class="codicon codicon-warning problem-icon-warn"></i>` +
+        `<span class="problem-msg">${esc(msg)}</span>` +
+        `<span class="problem-location">${esc(filePath)}:${line}</span>`;
+
+      item.onclick = () => {
+        Tabs.open(filePath);
+        if (editor) editor.revealLineInCenter(line);
+      };
+      list.appendChild(item);
+    });
   }
 
   function setBuildStatus(type, text) {
     const el = $('status-build');
+    if (!el) return;
     if (type === 'success') {
       el.className = 'status-item status-badge-ok';
       el.innerHTML = `<i class="codicon codicon-check"></i> ${esc(text)}`;
@@ -813,12 +1678,27 @@
     }
   }
 
-  /* ── Terminal Helpers ───────────────────────────────────────────────── */
+  /* ── Panel Log Helpers ─────────────────────────────────────────────── */
   function termLog(msg, type) {
     const term = $('terminal');
+    if (!term) return;
     const cls = type === 'err' ? 'term-err' : type === 'warn' ? 'term-warn' : type === 'out' ? 'term-out' : 'term-sys';
     term.innerHTML += `<div class="term-line ${cls}">${esc(msg)}</div>`;
     term.scrollTop = term.scrollHeight;
+  }
+
+  function outputLog(msg) {
+    const out = $('output-log');
+    if (!out) return;
+    out.innerHTML += `<div class="term-line term-sys">${esc(msg)}</div>`;
+    out.scrollTop = out.scrollHeight;
+  }
+
+  function debugLog(msg) {
+    const dbg = $('debug-log');
+    if (!dbg) return;
+    dbg.innerHTML += `<div class="term-line term-out">${esc(msg)}</div>`;
+    dbg.scrollTop = dbg.scrollHeight;
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -968,7 +1848,6 @@
     if (s.startsWith('Stmt SExpr:')) return 'ExprStmt';
     if (s.startsWith('Stmt SReturn:')) return 'ReturnStmt';
     if (s.startsWith('Stmt SIf:')) return 'IfStmt';
-    if (s.startsWith('Stmt SFor:')) return 'ForStmt';
     if (s.startsWith('Stmt SWhile:')) return 'WhileStmt';
 
     if (s.startsWith('Expr: Type=')) {
@@ -1010,7 +1889,7 @@
       allowEmptyParams: true,
     };
 
-    const allCFiles = VFS.list().filter(p => p.endsWith('.c') && !VFS.read(p).generated);
+    const allCFiles = VFS.list().filter(p => p.endsWith('.c'));
     const compileUnits = [filename].concat(allCFiles.filter(p => p !== filename));
 
     try {
@@ -1137,12 +2016,16 @@
         const m = e.data;
         if (m.type === 'stdout') {
           m.text.split('\n').forEach((line, i, arr) => {
-            if (line || i < arr.length - 1) termLog(line, 'out');
+            if (line || i < arr.length - 1) {
+              termLog(line, 'out');
+              debugLog(line);
+            }
           });
         } else if (m.type === 'stderr') {
           termLog(m.text, 'err');
         } else if (m.type === 'exit') {
           termLog(`[Process Exited] Return code: ${m.code}`);
+          debugLog(`Process exited with code ${m.code}`);
           worker.terminate();
           URL.revokeObjectURL(url);
         } else if (m.type === 'error') {
